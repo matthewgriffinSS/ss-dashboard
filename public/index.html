@@ -12,13 +12,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .header h1{font-size:18px;font-weight:600;color:var(--accent);letter-spacing:1px}
 .header .meta{font-size:12px;color:var(--text2)}
-.header .refresh-btn{padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600}
-.header .refresh-btn:hover{background:var(--accent2)}
-.header .refresh-btn:disabled{background:var(--bg4);color:var(--text3);cursor:wait}
 .container{max-width:1400px;margin:0 auto;padding:20px}
 .loading{text-align:center;padding:60px;font-size:16px;color:var(--text2)}
 .progress-bar{width:300px;height:4px;background:var(--bg3);border-radius:2px;margin:12px auto}
 .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+.date-bar{display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:12px 16px;background:var(--bg2);border-radius:12px;border:1px solid var(--border);flex-wrap:wrap}
+.date-bar label{font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px}
+.date-btn{padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text2);font-weight:500;transition:all .15s}
+.date-btn:hover{border-color:var(--accent);color:var(--accent)}
+.date-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.date-input{padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px}
+.date-input::-webkit-calendar-picker-indicator{filter:invert(1)}
+.go-btn{padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600}
+.go-btn:hover{background:var(--accent2)}
+.go-btn:disabled{background:var(--bg4);color:var(--text3);cursor:wait}
 .filters{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px;padding:16px;background:var(--bg2);border-radius:12px;border:1px solid var(--border)}
 .filter-group{display:flex;flex-direction:column;gap:4px}
 .filter-label{font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px}
@@ -50,11 +57,24 @@ tr:hover td{background:var(--bg3)}
 </head>
 <body>
 <div class="header">
-<div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Loading data...</div></div>
-<button class="refresh-btn" id="refreshBtn" onclick="loadAll()">Refresh</button>
+<div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Select a date range to load data</div></div>
 </div>
 <div class="container">
-<div id="loadingArea" class="loading"><div>Loading orders from Shopify...</div><div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div><div id="loadingDetail" style="margin-top:8px;font-size:13px">Fetching page 1...</div></div>
+<div class="date-bar">
+<label>Date range</label>
+<button class="date-btn" onclick="setPreset('thisWeek')">This week</button>
+<button class="date-btn" onclick="setPreset('thisMonth')">This month</button>
+<button class="date-btn" onclick="setPreset('lastMonth')">Last month</button>
+<button class="date-btn" onclick="setPreset('thisQuarter')">This quarter</button>
+<button class="date-btn" onclick="setPreset('thisYear')">This year</button>
+<button class="date-btn" onclick="setPreset('lastYear')">Last year</button>
+<span style="color:var(--text3);margin:0 4px">|</span>
+<input type="date" id="dateFrom" class="date-input">
+<span style="color:var(--text3)">to</span>
+<input type="date" id="dateTo" class="date-input">
+<button class="go-btn" id="goBtn" onclick="loadAll()">Load data</button>
+</div>
+<div id="loadingArea" class="loading" style="display:none"><div>Loading from Shopify...</div><div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div><div id="loadingDetail" style="margin-top:8px;font-size:13px"></div></div>
 <div id="dashboard" style="display:none">
 <div class="filters" id="filters"></div>
 <div class="kpi-row" id="kpis"></div>
@@ -72,28 +92,112 @@ tr:hover td{background:var(--bg3)}
 </div></div>
 <script>
 Chart.defaults.color='#999';Chart.defaults.borderColor='#333';
-let allOrders=[],allDrafts=[];let filters={rep:new Set(),month:new Set(),year:new Set(),salesType:new Set()};let repChart=null,monthChart=null;
-const fmt=n=>'$'+Math.round(n).toLocaleString();const fmtD=n=>'$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});const pct=n=>Math.round(n*100)+'%';
-const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];const monthOrder={};monthNames.forEach((m,i)=>monthOrder[m]=i);
-function classifySalesType(tags,source){const t=(tags||'').toLowerCase();if(t.includes('phone'))return'Phone';if(t.includes('chat'))return'Chat';if(t.includes('email'))return'Email';if(t.includes('rich')||t.includes('slack'))return'Richpanel';if(t.includes('wholesale'))return'Wholesale';if(t.includes('rebuild'))return'Rebuild';if(t.includes('save'))return'Saved';if(t.includes('walk'))return'Walk In';if(t.includes('social')||t.includes('facebook')||t.includes('instagram'))return'Social';if(t.includes('f&f'))return'F&F';if(source==='shopify_draft_order')return'Draft Order';if(source==='web')return'Web';return'Other'}
-async function fetchAllPages(endpoint){let all=[],sinceId='0',page=1;const key=endpoint.includes('draft')?'drafts':'orders';while(true){document.getElementById('loadingDetail').textContent=`Fetching ${key} page ${page}...`;const res=await fetch(`/api/${endpoint}?since_id=${sinceId}&days=60`);const data=await res.json();if(data.error){console.error(data.error);break}const items=data[key]||[];all=all.concat(items);document.getElementById('progressFill').style.width=Math.min(90,page*15)+'%';if(!data.hasMore||!data.lastId)break;sinceId=String(data.lastId);page++;await new Promise(r=>setTimeout(r,200))}return all}
-async function loadAll(){document.getElementById('refreshBtn').disabled=true;document.getElementById('loadingArea').style.display='block';document.getElementById('dashboard').style.display='none';document.getElementById('progressFill').style.width='0%';allOrders=await fetchAllPages('orders');allOrders.forEach(o=>{o.sales_type=classifySalesType(o.tags,o.source)});document.getElementById('loadingDetail').textContent='Orders loaded. Fetching drafts...';document.getElementById('progressFill').style.width='50%';allDrafts=await fetchAllPages('draft-orders');allDrafts.forEach(o=>{o.sales_type=classifySalesType(o.tags,'')});document.getElementById('progressFill').style.width='100%';document.getElementById('loadingArea').style.display='none';document.getElementById('dashboard').style.display='block';document.getElementById('refreshBtn').disabled=false;const now=new Date();document.getElementById('status').textContent=`Last refreshed: ${now.toLocaleTimeString()} | ${allOrders.length} order lines | ${allDrafts.length} draft lines`;filters={rep:new Set(),month:new Set(),year:new Set(),salesType:new Set()};buildFilters();render()}
-function buildFilters(){const reps=new Set(),months=new Set(),years=new Set(),types=new Set();[...allOrders,...allDrafts].forEach(o=>{if(o.rep&&o.rep!=='Unassigned'&&o.rep!=='Steve')reps.add(o.rep);const d=new Date(o.created_at);months.add(monthNames[d.getMonth()]);years.add(d.getFullYear());if(o.sales_type)types.add(o.sales_type)});let html='';html+=buildFilterGroup('Rep','rep',[...reps].sort());html+=buildFilterGroup('Month','month',[...months].sort((a,b)=>monthOrder[a]-monthOrder[b]));html+=buildFilterGroup('Year','year',[...years].sort());document.getElementById('filters').innerHTML=html;document.querySelectorAll('.pill').forEach(p=>{p.addEventListener('click',()=>{const key=p.dataset.key,val=p.dataset.val;if(val==='__ALL__'){filters[key].clear();document.querySelectorAll(`.pill[data-key="${key}"]`).forEach(x=>x.classList.remove('active'));p.classList.add('active')}else{document.querySelector(`.pill[data-key="${key}"][data-val="__ALL__"]`).classList.remove('active');p.classList.toggle('active');if(p.classList.contains('active'))filters[key].add(val);else filters[key].delete(val);if(filters[key].size===0)document.querySelector(`.pill[data-key="${key}"][data-val="__ALL__"]`).classList.add('active')}render()})})}
-function buildFilterGroup(label,key,values){let html=`<div class="filter-group"><div class="filter-label">${label}</div><div class="filter-pills"><div class="pill active" data-key="${key}" data-val="__ALL__">All</div>`;values.forEach(v=>{html+=`<div class="pill" data-key="${key}" data-val="${v}">${v}</div>`});return html+'</div></div>'}
-function applyFilters(data){return data.filter(o=>{if(filters.rep.size&&!filters.rep.has(o.rep))return false;if(filters.salesType.size&&!filters.salesType.has(o.sales_type))return false;const d=new Date(o.created_at);if(filters.month.size&&!filters.month.has(monthNames[d.getMonth()]))return false;if(filters.year.size&&!filters.year.has(String(d.getFullYear())))return false;return true})}
-function getUniqueOrders(data){const seen=new Set();return data.filter(o=>{const key=o.id+'_'+o.rep;if(seen.has(key))return false;seen.add(key);return true})}
-function render(){const orders=applyFilters(allOrders),drafts=applyFilters(allDrafts),uo=getUniqueOrders(orders),ud=getUniqueOrders(drafts);renderKPIs(uo,ud);renderRepChart(uo);renderMonthChart(uo);renderRepSummary(uo);renderDraftSalesType(ud);renderRepSource(uo);renderVendorRep(drafts);renderRepStatus(ud);renderChannelPerf(uo);renderKPITable(uo,ud)}
-function renderKPIs(orders,drafts){const rev=orders.reduce((s,o)=>s+o.subtotal,0),cnt=orders.length,aov=cnt?rev/cnt:0,dc=drafts.length,od=drafts.filter(d=>d.status==='open').length;document.getElementById('kpis').innerHTML=[{l:'Revenue',v:fmtD(rev)},{l:'Orders',v:cnt.toLocaleString()},{l:'AOV',v:fmtD(aov)},{l:'Drafts sent',v:dc.toLocaleString()},{l:'Open drafts',v:od.toLocaleString()}].map(k=>`<div class="kpi"><div class="label">${k.l}</div><div class="value">${k.v}</div></div>`).join('')}
+let allOrders=[],allDrafts=[],filters={rep:new Set(),month:new Set()},repChart=null,monthChart=null;
+const fmt=n=>'$'+Math.round(n).toLocaleString();
+const fmtD=n=>'$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const pct=n=>Math.round(n*100)+'%';
+const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const monthOrder={};monthNames.forEach((m,i)=>monthOrder[m]=i);
+
+function setPreset(p){
+  const now=new Date();const y=now.getFullYear();const m=now.getMonth();
+  let from,to;
+  if(p==='thisWeek'){const d=now.getDay();const diff=d===0?6:d-1;from=new Date(now);from.setDate(now.getDate()-diff);to=now}
+  else if(p==='thisMonth'){from=new Date(y,m,1);to=now}
+  else if(p==='lastMonth'){from=new Date(y,m-1,1);to=new Date(y,m,0)}
+  else if(p==='thisQuarter'){const q=Math.floor(m/3)*3;from=new Date(y,q,1);to=now}
+  else if(p==='thisYear'){from=new Date(y,0,1);to=now}
+  else if(p==='lastYear'){from=new Date(y-1,0,1);to=new Date(y-1,11,31)}
+  document.getElementById('dateFrom').value=from.toISOString().split('T')[0];
+  document.getElementById('dateTo').value=to.toISOString().split('T')[0];
+  document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadAll();
+}
+
+async function fetchAllPages(endpoint,dateMin,dateMax){
+  let all=[],sinceId='0',page=1;
+  const key=endpoint.includes('draft')?'drafts':'orders';
+  while(true){
+    document.getElementById('loadingDetail').textContent=`Fetching ${key} page ${page}...`;
+    const res=await fetch(`/api/${endpoint}?since_id=${sinceId}&date_min=${dateMin}&date_max=${dateMax}`);
+    const data=await res.json();
+    if(data.error){console.error(data.error);break}
+    const items=data[key]||[];
+    all=all.concat(items);
+    document.getElementById('progressFill').style.width=Math.min(90,page*10)+'%';
+    if(!data.hasMore||!data.lastId)break;
+    sinceId=String(data.lastId);page++;
+    await new Promise(r=>setTimeout(r,200));
+  }
+  return all;
+}
+
+async function loadAll(){
+  const dateMin=document.getElementById('dateFrom').value;
+  const dateTo=document.getElementById('dateTo').value;
+  if(!dateMin||!dateTo){alert('Select a date range first');return}
+  document.getElementById('goBtn').disabled=true;
+  document.getElementById('loadingArea').style.display='block';
+  document.getElementById('dashboard').style.display='none';
+  document.getElementById('progressFill').style.width='0%';
+
+  allOrders=await fetchAllPages('orders',dateMin,dateTo);
+  document.getElementById('loadingDetail').textContent='Orders loaded. Fetching drafts...';
+  document.getElementById('progressFill').style.width='50%';
+  allDrafts=await fetchAllPages('draft-orders',dateMin,dateTo);
+  document.getElementById('progressFill').style.width='100%';
+
+  document.getElementById('loadingArea').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('goBtn').disabled=false;
+  document.getElementById('status').textContent=`${dateMin} to ${dateTo} | ${allOrders.length} order lines | ${allDrafts.length} draft lines | Refreshed ${new Date().toLocaleTimeString()}`;
+
+  filters={rep:new Set(),month:new Set()};
+  buildFilters();render();
+}
+
+function buildFilters(){
+  const reps=new Set(),months=new Set();
+  [...allOrders,...allDrafts].forEach(o=>{if(o.rep)reps.add(o.rep);const d=new Date(o.created_at);months.add(monthNames[d.getMonth()])});
+  let html='';
+  html+=buildFilterGroup('Rep','rep',[...reps].sort());
+  html+=buildFilterGroup('Month','month',[...months].sort((a,b)=>monthOrder[a]-monthOrder[b]));
+  document.getElementById('filters').innerHTML=html;
+  document.querySelectorAll('.pill').forEach(p=>{p.addEventListener('click',()=>{
+    const key=p.dataset.key,val=p.dataset.val;
+    if(val==='__ALL__'){filters[key].clear();document.querySelectorAll(`.pill[data-key="${key}"]`).forEach(x=>x.classList.remove('active'));p.classList.add('active')}
+    else{document.querySelector(`.pill[data-key="${key}"][data-val="__ALL__"]`).classList.remove('active');p.classList.toggle('active');if(p.classList.contains('active'))filters[key].add(val);else filters[key].delete(val);if(filters[key].size===0)document.querySelector(`.pill[data-key="${key}"][data-val="__ALL__"]`).classList.add('active')}
+    render()})});
+}
+function buildFilterGroup(label,key,values){let h=`<div class="filter-group"><div class="filter-label">${label}</div><div class="filter-pills"><div class="pill active" data-key="${key}" data-val="__ALL__">All</div>`;values.forEach(v=>{h+=`<div class="pill" data-key="${key}" data-val="${v}">${v}</div>`});return h+'</div></div>'}
+
+function applyFilters(data){return data.filter(o=>{if(filters.rep.size&&!filters.rep.has(o.rep))return false;const d=new Date(o.created_at);if(filters.month.size&&!filters.month.has(monthNames[d.getMonth()]))return false;return true})}
+function unique(data){const seen=new Set();return data.filter(o=>{const k=o.id+'_'+o.rep;if(seen.has(k))return false;seen.add(k);return true})}
+
+function render(){const o=applyFilters(allOrders),d=applyFilters(allDrafts),uo=unique(o),ud=unique(d);renderKPIs(uo,ud);renderRepChart(uo);renderMonthChart(uo);renderT1(uo);renderT2(ud);renderT3(uo);renderT4(d);renderT5(ud);renderT6(uo);renderT7(uo,ud)}
+
+function renderKPIs(o,d){const rev=o.reduce((s,x)=>s+x.subtotal,0),cnt=o.length,aov=cnt?rev/cnt:0,dc=d.length,od=d.filter(x=>x.status==='open').length;document.getElementById('kpis').innerHTML=[{l:'Revenue',v:fmtD(rev)},{l:'Orders',v:cnt.toLocaleString()},{l:'AOV',v:fmtD(aov)},{l:'Drafts sent',v:dc.toLocaleString()},{l:'Open drafts',v:od.toLocaleString()}].map(k=>`<div class="kpi"><div class="label">${k.l}</div><div class="value">${k.v}</div></div>`).join('')}
+
 const cc=['#e85d24','#ff7a3d','#30d5c8','#0a84ff','#bf5af2','#ffd60a','#34c759','#ff453a','#ff9f0a','#5e5ce6'];
-function renderRepChart(orders){const rt={};orders.forEach(o=>{rt[o.rep]=(rt[o.rep]||0)+o.subtotal});const sorted=Object.entries(rt).sort((a,b)=>b[1]-a[1]).filter(([k])=>k!=='Unassigned'&&k!=='Steve');if(repChart)repChart.destroy();repChart=new Chart(document.getElementById('repChart'),{type:'bar',data:{labels:sorted.map(([k])=>k),datasets:[{data:sorted.map(([,v])=>v),backgroundColor:sorted.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}})}
-function renderMonthChart(orders){const mt={};orders.forEach(o=>{const d=new Date(o.created_at),k=monthNames[d.getMonth()];mt[k]=(mt[k]||0)+o.subtotal});const sorted=monthNames.filter(m=>mt[m]);if(monthChart)monthChart.destroy();monthChart=new Chart(document.getElementById('monthChart'),{type:'bar',data:{labels:sorted.map(m=>m.slice(0,3)),datasets:[{data:sorted.map(m=>mt[m]||0),backgroundColor:'#e85d24',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:false}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}})}
-function renderRepSummary(orders){const reps={};orders.forEach(o=>{if(!reps[o.rep])reps[o.rep]={rev:0,cnt:0};reps[o.rep].rev+=o.subtotal;reps[o.rep].cnt++});const sorted=Object.entries(reps).filter(([k])=>k!=='Unassigned'&&k!=='Steve').sort((a,b)=>b[1].rev-a[1].rev);const tr=sorted.reduce((s,[,v])=>s+v.rev,0),tc=sorted.reduce((s,[,v])=>s+v.cnt,0);let h='<table><thead><tr><th>Rep</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th></tr></thead><tbody>';sorted.forEach(([r,d])=>{h+=`<tr><td>${r}</td><td class="num">${fmtD(d.rev)}</td><td class="num">${d.cnt}</td><td class="num">${fmtD(d.cnt?d.rev/d.cnt:0)}</td></tr>`});h+=`<tr class="grand-total"><td>Grand Total</td><td class="num">${fmtD(tr)}</td><td class="num">${tc}</td><td class="num">${fmtD(tc?tr/tc:0)}</td></tr></tbody></table>`;document.getElementById('t1').innerHTML=h}
-function renderDraftSalesType(drafts){const types=new Set(),reps={};drafts.forEach(d=>{types.add(d.sales_type);if(!reps[d.rep])reps[d.rep]={};if(!reps[d.rep][d.sales_type])reps[d.rep][d.sales_type]={val:0,cnt:0};reps[d.rep][d.sales_type].val+=d.subtotal;reps[d.rep][d.sales_type].cnt++});const st=[...types].sort(),sr=Object.keys(reps).filter(k=>k!=='Unassigned').sort();let h='<table><thead><tr><th>Rep</th>';st.forEach(t=>{h+=`<th class="num">${t} Value</th><th class="num">${t} Count</th>`});h+='<th class="num">Grand Total</th></tr></thead><tbody>';const gt={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;st.forEach(t=>{const d=(reps[rep]||{})[t]||{val:0,cnt:0};h+=`<td class="num">${d.val?fmtD(d.val):''}</td><td class="num">${d.cnt||''}</td>`;rt+=d.val;if(!gt[t])gt[t]={val:0,cnt:0};gt[t].val+=d.val;gt[t].cnt+=d.cnt});h+=`<td class="num">${fmtD(rt)}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;st.forEach(t=>{const d=gt[t]||{val:0,cnt:0};h+=`<td class="num">${fmtD(d.val)}</td><td class="num">${d.cnt}</td>`;g+=d.val});h+=`<td class="num">${fmtD(g)}</td></tr></tbody></table>`;document.getElementById('t2').innerHTML=h}
-function renderRepSource(orders){const sources=new Set(),reps={};orders.forEach(o=>{const src=o.source==='shopify_draft_order'?'Draft Order':o.source==='web'?'Web':'Other';sources.add(src);if(!reps[o.rep])reps[o.rep]={};reps[o.rep][src]=(reps[o.rep][src]||0)+1});const ss=[...sources].sort(),sr=Object.keys(reps).filter(k=>k!=='Unassigned').sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+=`<th class="num">${s}</th>`});h+='<th class="num">Grand Total</th></tr></thead><tbody>';const totals={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+=`<td class="num">${v||''}</td>`;rt+=v;totals[s]=(totals[s]||0)+v});h+=`<td class="num">${rt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+=`<td class="num">${totals[s]||0}</td>`;g+=totals[s]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t3').innerHTML=h}
-function renderVendorRep(drafts){const vendors={},repSet=new Set();drafts.forEach(d=>{if(!d.vendor)return;repSet.add(d.rep);if(!vendors[d.vendor])vendors[d.vendor]={};vendors[d.vendor][d.rep]=(vendors[d.vendor][d.rep]||0)+1});const sr=[...repSet].filter(k=>k!=='Unassigned'&&k!=='Steve').sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+=`<th class="num">${r}</th>`});h+='<th class="num">Grand Total</th></tr></thead><tbody>';const rt={};sv.forEach(([vendor,data])=>{h+=`<tr><td>${vendor}</td>`;let vt=0;sr.forEach(r=>{const v=data[r]||0;h+=`<td class="num">${v||''}</td>`;vt+=v;rt[r]=(rt[r]||0)+v});h+=`<td class="num">${vt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+=`<td class="num">${rt[r]||0}</td>`;g+=rt[r]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t4').innerHTML=h}
-function renderRepStatus(drafts){const statuses=new Set(),reps={};drafts.forEach(d=>{statuses.add(d.status);if(!reps[d.rep])reps[d.rep]={};reps[d.rep][d.status]=(reps[d.rep][d.status]||0)+1});const ss=[...statuses].sort(),sr=Object.keys(reps).filter(k=>k!=='Unassigned').sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+=`<th class="num">${s}</th>`});h+='<th class="num">Grand Total</th></tr></thead><tbody>';const totals={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+=`<td class="num">${v||''}</td>`;rt+=v;totals[s]=(totals[s]||0)+v});h+=`<td class="num">${rt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+=`<td class="num">${totals[s]||0}</td>`;g+=totals[s]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t5').innerHTML=h}
-function renderChannelPerf(orders){const ch={};orders.forEach(o=>{if(!ch[o.sales_type])ch[o.sales_type]={rev:0,cnt:0};ch[o.sales_type].rev+=o.subtotal;ch[o.sales_type].cnt++});const sorted=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=sorted.reduce((s,[,v])=>s+v.rev,0),tc=sorted.reduce((s,[,v])=>s+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';sorted.forEach(([c,d])=>{h+=`<tr><td>${c}</td><td class="num">${fmtD(d.rev)}</td><td class="num">${d.cnt}</td><td class="num">${fmtD(d.cnt?d.rev/d.cnt:0)}</td><td class="num">${pct(tr?d.rev/tr:0)}</td></tr>`});h+=`<tr class="grand-total"><td>Total</td><td class="num">${fmtD(tr)}</td><td class="num">${tc}</td><td class="num">${fmtD(tc?tr/tc:0)}</td><td class="num">100%</td></tr></tbody></table>`;document.getElementById('t6').innerHTML=h}
-function renderKPITable(orders,drafts){const rev=orders.reduce((s,o)=>s+o.subtotal,0),cnt=orders.length,aov=cnt?rev/cnt:0,dc=drafts.length,od=drafts.filter(d=>d.status==='open').length;const kpis=[{name:'Total Revenue',target:1125000,actual:rev,fmt:fmtD},{name:'Total Orders',target:750,actual:cnt,fmt:v=>v.toLocaleString()},{name:'AOV',target:800,actual:aov,fmt:fmtD},{name:'Drafts Sent',target:400,actual:dc,fmt:v=>v.toLocaleString()},{name:'Open Drafts',target:null,actual:od,fmt:v=>v.toLocaleString()}];let h='<table><thead><tr><th>KPI</th><th class="num">Target</th><th class="num">Actual</th><th class="num">% to Goal</th><th>Status</th></tr></thead><tbody>';kpis.forEach(k=>{const p=k.target?k.actual/k.target:null;const s=p===null?'':p>=1?'G':p>=0.7?'Y':'R';const sc=s==='G'?'status-g':s==='Y'?'status-y':s==='R'?'status-r':'';h+=`<tr><td>${k.name}</td><td class="num">${k.target!==null?k.fmt(k.target):''}</td><td class="num">${k.fmt(k.actual)}</td><td class="num">${p!==null?pct(p):''}</td><td class="${sc}">${s}</td></tr>`});h+='</tbody></table>';document.getElementById('t7').innerHTML=h}
-loadAll();
+function renderRepChart(o){const rt={};o.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);if(repChart)repChart.destroy();repChart=new Chart(document.getElementById('repChart'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}})}
+function renderMonthChart(o){const mt={};o.forEach(x=>{const d=new Date(x.created_at),k=monthNames[d.getMonth()];mt[k]=(mt[k]||0)+x.subtotal});const s=monthNames.filter(m=>mt[m]);if(monthChart)monthChart.destroy();monthChart=new Chart(document.getElementById('monthChart'),{type:'bar',data:{labels:s.map(m=>m.slice(0,3)),datasets:[{data:s.map(m=>mt[m]||0),backgroundColor:'#e85d24',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:false}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}})}
+
+function renderT1(o){const reps={};o.forEach(x=>{if(!reps[x.rep])reps[x.rep]={rev:0,cnt:0};reps[x.rep].rev+=x.subtotal;reps[x.rep].cnt++});const s=Object.entries(reps).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Rep</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th></tr></thead><tbody>';s.forEach(([r,d])=>{h+=`<tr><td>${r}</td><td class="num">${fmtD(d.rev)}</td><td class="num">${d.cnt}</td><td class="num">${fmtD(d.cnt?d.rev/d.cnt:0)}</td></tr>`});h+=`<tr class="grand-total"><td>Grand Total</td><td class="num">${fmtD(tr)}</td><td class="num">${tc}</td><td class="num">${fmtD(tc?tr/tc:0)}</td></tr></tbody></table>`;document.getElementById('t1').innerHTML=h}
+
+function renderT2(d){const types=new Set(),reps={};d.forEach(x=>{types.add(x.sales_type);if(!reps[x.rep])reps[x.rep]={};if(!reps[x.rep][x.sales_type])reps[x.rep][x.sales_type]={val:0,cnt:0};reps[x.rep][x.sales_type].val+=x.subtotal;reps[x.rep][x.sales_type].cnt++});const st=[...types].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';st.forEach(t=>{h+=`<th class="num">${t} Value</th><th class="num">${t} Count</th>`});h+='<th class="num">Total</th></tr></thead><tbody>';const gt={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;st.forEach(t=>{const v=(reps[rep]||{})[t]||{val:0,cnt:0};h+=`<td class="num">${v.val?fmtD(v.val):''}</td><td class="num">${v.cnt||''}</td>`;rt+=v.val;if(!gt[t])gt[t]={val:0,cnt:0};gt[t].val+=v.val;gt[t].cnt+=v.cnt});h+=`<td class="num">${fmtD(rt)}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;st.forEach(t=>{const v=gt[t]||{val:0,cnt:0};h+=`<td class="num">${fmtD(v.val)}</td><td class="num">${v.cnt}</td>`;g+=v.val});h+=`<td class="num">${fmtD(g)}</td></tr></tbody></table>`;document.getElementById('t2').innerHTML=h}
+
+function renderT3(o){const sources=new Set(),reps={};o.forEach(x=>{const src=x.source==='shopify_draft_order'?'Draft Order':x.source==='web'?'Web':'Other';sources.add(src);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][src]=(reps[x.rep][src]||0)+1});const ss=[...sources].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+=`<th class="num">${s}</th>`});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+=`<td class="num">${v||''}</td>`;rt+=v;tot[s]=(tot[s]||0)+v});h+=`<td class="num">${rt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+=`<td class="num">${tot[s]||0}</td>`;g+=tot[s]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t3').innerHTML=h}
+
+function renderT4(d){const vendors={},repSet=new Set();d.forEach(x=>{if(!x.vendor)return;repSet.add(x.rep);if(!vendors[x.vendor])vendors[x.vendor]={};vendors[x.vendor][x.rep]=(vendors[x.vendor][x.rep]||0)+1});const sr=[...repSet].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+=`<th class="num">${r}</th>`});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+=`<tr><td>${v}</td>`;let vt=0;sr.forEach(r=>{const c=data[r]||0;h+=`<td class="num">${c||''}</td>`;vt+=c;rt[r]=(rt[r]||0)+c});h+=`<td class="num">${vt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+=`<td class="num">${rt[r]||0}</td>`;g+=rt[r]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t4').innerHTML=h}
+
+function renderT5(d){const statuses=new Set(),reps={};d.forEach(x=>{statuses.add(x.status);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][x.status]=(reps[x.rep][x.status]||0)+1});const ss=[...statuses].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+=`<th class="num">${s}</th>`});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+=`<tr><td>${rep}</td>`;let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+=`<td class="num">${v||''}</td>`;rt+=v;tot[s]=(tot[s]||0)+v});h+=`<td class="num">${rt}</td></tr>`});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+=`<td class="num">${tot[s]||0}</td>`;g+=tot[s]||0});h+=`<td class="num">${g}</td></tr></tbody></table>`;document.getElementById('t5').innerHTML=h}
+
+function renderT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]={rev:0,cnt:0};ch[x.sales_type].rev+=x.subtotal;ch[x.sales_type].cnt++});const s=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';s.forEach(([c,d])=>{h+=`<tr><td>${c}</td><td class="num">${fmtD(d.rev)}</td><td class="num">${d.cnt}</td><td class="num">${fmtD(d.cnt?d.rev/d.cnt:0)}</td><td class="num">${pct(tr?d.rev/tr:0)}</td></tr>`});h+=`<tr class="grand-total"><td>Total</td><td class="num">${fmtD(tr)}</td><td class="num">${tc}</td><td class="num">${fmtD(tc?tr/tc:0)}</td><td class="num">100%</td></tr></tbody></table>`;document.getElementById('t6').innerHTML=h}
+
+function renderT7(o,d){const rev=o.reduce((s,x)=>s+x.subtotal,0),cnt=o.length,aov=cnt?rev/cnt:0,dc=d.length,od=d.filter(x=>x.status==='open').length;const kpis=[{n:'Total Revenue',t:1125000,a:rev,f:fmtD},{n:'Total Orders',t:750,a:cnt,f:v=>v.toLocaleString()},{n:'AOV',t:800,a:aov,f:fmtD},{n:'Drafts Sent',t:400,a:dc,f:v=>v.toLocaleString()},{n:'Open Drafts',t:null,a:od,f:v=>v.toLocaleString()}];let h='<table><thead><tr><th>KPI</th><th class="num">Target</th><th class="num">Actual</th><th class="num">% to Goal</th><th>Status</th></tr></thead><tbody>';kpis.forEach(k=>{const p=k.t?k.a/k.t:null;const s=p===null?'':p>=1?'G':p>=0.7?'Y':'R';const sc=s==='G'?'status-g':s==='Y'?'status-y':s==='R'?'status-r':'';h+=`<tr><td>${k.n}</td><td class="num">${k.t!==null?k.f(k.t):''}</td><td class="num">${k.f(k.a)}</td><td class="num">${p!==null?pct(p):''}</td><td class="${sc}">${s}</td></tr>`});h+='</tbody></table>';document.getElementById('t7').innerHTML=h}
+
+// Default to this month on load
+(function(){const now=new Date();document.getElementById('dateFrom').value=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];document.getElementById('dateTo').value=now.toISOString().split('T')[0]})();
 </script>
 </body></html>
