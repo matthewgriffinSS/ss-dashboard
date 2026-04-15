@@ -86,9 +86,10 @@ export default async function handler(req, res) {
   // Check cache for completed months
 if (isComplete) {
     try {
-      const { blobs } = await list({ prefix: blobKey });
-      if (blobs.length > 0) {
-        const cached = await fetch(blobs[0].url).then(r => r.json());
+      const { blobs } = await list({ prefix: blobKey, limit: 1 });
+      if (blobs && blobs.length > 0) {
+        const blobUrl = blobs[0].downloadUrl;
+        const cached = await fetch(blobUrl).then(r => r.json());
         return res.status(200).json({ data: cached, source: 'cache', month });
       }
     } catch (e) { console.error('Cache read error:', e.message); }
@@ -127,7 +128,7 @@ if (isComplete) {
     // Cache completed months
     if (isComplete && processed.length > 0) {
       try {
-        await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
+        await put(blobKey, JSON.stringify(processed), { access: 'private', addRandomSuffix: false });
       } catch (e) { console.error('Cache write error:', e.message); }
     }
 
