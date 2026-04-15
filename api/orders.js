@@ -1,4 +1,4 @@
-import { put, head } from '@vercel/blob';
+import { put, list } from '@vercel/blob';
 
 const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
 const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
@@ -84,16 +84,14 @@ export default async function handler(req, res) {
   const blobKey = `orders-${month}.json`;
 
   // Check cache for completed months
-  if (isComplete) {
+if (isComplete) {
     try {
-      const blob = await head(blobKey);
-      if (blob && blob.url) {
-        const cached = await fetch(blob.url).then(r => r.json());
+      const { blobs } = await list({ prefix: blobKey });
+      if (blobs.length > 0) {
+        const cached = await fetch(blobs[0].url).then(r => r.json());
         return res.status(200).json({ data: cached, source: 'cache', month });
       }
-    } catch (e) {
-      // Not cached, fetch from Shopify
-    }
+    } catch (e) { console.error('Cache read error:', e.message); }
   }
 
   // Fetch from Shopify
