@@ -83,16 +83,19 @@ export default async function handler(req, res) {
   const isComplete = month < currentMonth;
   const blobKey = `drafts-${month}.json`;
 
- if (isComplete) {
+  // Check cache for completed months
+  if (isComplete) {
     try {
       const { blobs } = await list({ prefix: blobKey });
       if (blobs.length > 0) {
-        const cached = await fetch(blobs[0].url).then(r => r.json());
+        const url = blobs[0].downloadUrl || blobs[0].url;
+        const cached = await fetch(url).then(r => r.json());
         return res.status(200).json({ data: cached, source: 'cache', month });
       }
     } catch (e) { console.error('Cache read error:', e.message); }
   }
 
+  // Fetch from Shopify
   try {
     const tokenRes = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`, {
       method: 'POST',
@@ -109,7 +112,7 @@ export default async function handler(req, res) {
 
     let allRaw = [], sinceId = 0;
     while (true) {
-      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&updated_at_min=${dateMin}&created_at_max=${dateMax}`;
+      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&updated_at_min=${dateMin}&updated_at_max=${dateMax}`;
       const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
       if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
       const d = await r.json();
@@ -122,9 +125,10 @@ export default async function handler(req, res) {
 
     const processed = processDrafts(allRaw);
 
+    // Cache completed months
     if (isComplete && processed.length > 0) {
       try {
-        await put(blobKey, JSON.stringify(processed), { access: 'private', addRandomSuffix: false });
+        await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
       } catch (e) { console.error('Cache write error:', e.message); }
     }
 
