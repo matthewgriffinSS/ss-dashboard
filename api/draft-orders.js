@@ -124,7 +124,7 @@ export default async function handler(req, res) {
 
     if (isComplete && processed.length > 0) {
       try {
-        await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
+        await put(blobKey, JSON.stringify(processed), { access: 'private', addRandomSuffix: false });
       } catch (e) { console.error('Cache write error:', e.message); }
     }
 
