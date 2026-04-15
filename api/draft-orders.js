@@ -109,7 +109,7 @@ export default async function handler(req, res) {
 
     let allRaw = [], sinceId = 0;
     while (true) {
-      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&created_at_min=${dateMin}&created_at_max=${dateMax}`;
+      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&updated_at_min=${dateMin}&created_at_max=${dateMax}`;
       const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
       if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
       const d = await r.json();
