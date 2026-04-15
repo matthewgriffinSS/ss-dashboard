@@ -1,7 +1,7 @@
 import { put, head } from '@vercel/blob';
 
 const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
-const EXCLUDE_REPS = ['steve'];
+const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
 
 function getToken() {
   const { SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_STORE } = process.env;
@@ -57,7 +57,7 @@ function processDrafts(drafts) {
       for (const prefix of PREFIXES) {
         if (tag.startsWith(prefix)) {
           const name = tag.slice(prefix.length);
-          if (name && !reps.includes(name) && !EXCLUDE_REPS.includes(name.toLowerCase())) reps.push(name);
+          if (name && !reps.includes(name) && VALID_REPS.includes(name.toLowerCase())) reps.push(name);
         }
       }
     }
