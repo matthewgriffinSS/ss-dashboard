@@ -1,10 +1,10 @@
-import { put, list, head } from '@vercel/blob';
+import { put, list } from '@vercel/blob';
 
 export default async function handler(req, res) {
-  const results = { write: null, head: null, read: null, errors: [] };
+  const results = { write: null, read: null, errors: [] };
 
   try {
-    const blob = await put('test-cache.json', JSON.stringify({ test: true, time: Date.now() }), { addRandomSuffix: false });
+    const blob = await put('test-cache.json', JSON.stringify({ test: true, time: Date.now() }), { access: 'public', addRandomSuffix: false });
     results.write = { success: true, url: blob.url, downloadUrl: blob.downloadUrl };
   } catch (e) {
     results.write = { success: false };
