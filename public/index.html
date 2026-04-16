@@ -54,10 +54,26 @@ tr:hover td{background:var(--bg3)}
 .scope-note{font-size:11px;color:var(--yellow);padding:8px 16px;background:var(--bg2);border:1px solid var(--yellow);border-radius:8px;margin-bottom:16px}
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:1fr}}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}}
+.icon-btn{background:none;border:1px solid var(--border);color:var(--text2);width:32px;height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:16px;transition:all .15s}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:200}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;width:min(520px,92vw);max-height:80vh;overflow-y:auto}
+.modal h2{font-size:15px;font-weight:600;color:var(--accent);margin-bottom:4px}
+.modal .sub{font-size:11px;color:var(--text2);margin-bottom:14px}
+.cache-row{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg3);border-radius:6px;margin-bottom:6px;font-size:12px}
+.cache-row .meta{color:var(--text2);font-size:11px}
+.cache-row .key{color:var(--text);font-variant-numeric:tabular-nums}
+.btn-danger{background:var(--red);color:#fff;border:none;padding:4px 10px;border-radius:5px;font-size:11px;cursor:pointer;font-weight:500}
+.btn-danger:hover{opacity:.85}
+.btn-danger:disabled{opacity:.4;cursor:wait}
+.btn-muted{background:var(--bg4);color:var(--text);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer}
+.btn-muted:hover{border-color:var(--accent);color:var(--accent)}
+.modal-footer{display:flex;justify-content:space-between;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
 </style>
 </head>
 <body>
-<div class="header"><div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Select a date range to load data</div></div></div>
+<div class="header"><div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Select a date range to load data</div></div><button class="icon-btn" onclick="openCacheModal()" title="Manage cache">⚙</button></div>
 <div class="container">
 <div class="scope-note">Orders limited to last 60 days. Drafts available for all dates. Enable <strong>read_all_orders</strong> scope to unlock full history.</div>
 <div class="date-bar">
@@ -88,9 +104,62 @@ tr:hover td{background:var(--bg3)}
 <div class="card" style="margin-bottom:16px"><h3>Rep x draft status</h3><div class="table-scroll" id="t5"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Channel performance</h3><div class="table-scroll" id="t6"></div></div>
 </div></div>
+<div class="modal-bg" id="loginModal">
+<div class="modal">
+<h2>Sign in</h2>
+<div class="sub">This dashboard is password-protected.</div>
+<input type="password" id="loginPwd" placeholder="Password" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-bottom:10px" onkeydown="if(event.key==='Enter')submitLogin()">
+<div id="loginError" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
+<div class="modal-footer" style="justify-content:flex-end;border-top:none;padding-top:0;margin-top:0">
+<button class="go-btn" onclick="submitLogin()">Sign in</button>
+</div>
+</div>
+</div>
+<div class="modal-bg" id="cacheModal" onclick="if(event.target===this)closeCacheModal()">
+<div class="modal">
+<h2>Cache management</h2>
+<div class="sub">Cached months load instantly instead of hitting Shopify. Clear a month to force a fresh fetch on next load.</div>
+<div id="cacheList"><div style="text-align:center;color:var(--text2);padding:20px">Loading…</div></div>
+<div class="modal-footer">
+<button class="btn-danger" id="clearAllBtn" onclick="clearAllCache()">Clear all</button>
+<button class="btn-muted" onclick="closeCacheModal()">Close</button>
+</div>
+</div>
+</div>
 <script>
 Chart.defaults.color='#999';Chart.defaults.borderColor='#333';
 let allOrders=[],allDrafts=[],filters={rep:new Set(),month:new Set()},repChart=null,monthChart=null;
+// Session-level in-memory cache for current (incomplete) month to avoid
+// refetching when user reloads same range within the session.
+const sessionCache=new Map();
+// Auth: dashboard password (required for all data endpoints) and admin key
+// (required for cache management). Both are held in sessionStorage so they
+// don't persist across browser tabs closing.
+let dashKey=sessionStorage.getItem('dashKey')||'';
+let adminKey=sessionStorage.getItem('adminKey')||'';
+
+function authHeaders(extra){
+  const h=Object.assign({},extra||{});
+  if(dashKey)h['x-dash-key']=dashKey;
+  return h;
+}
+function adminHeaders(extra){
+  const h=Object.assign({},extra||{});
+  if(adminKey)h['x-admin-key']=adminKey;
+  return h;
+}
+
+async function fetchMonth(endpoint,mo,progressCb){
+  progressCb(mo);
+  const r=await fetch('/api/'+endpoint+'?month='+mo,{headers:authHeaders()});
+  if(r.status===401){promptLogin();throw new Error('Unauthorized')}
+  if(!r.ok)throw new Error(r.status+' '+r.statusText);
+  const ct=r.headers.get('content-type')||'';
+  if(!ct.includes('json'))throw new Error('Non-JSON response');
+  const d=await r.json();
+  if(d.error)throw new Error(d.error);
+  return{data:d.data||[],source:d.source};
+}
 const fmtD=n=>'$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const pct=n=>Math.round(n*100)+'%';
 const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -116,35 +185,79 @@ function sp(p,el){
   loadAll();
 }
 
-async function fetchMonthAllPages(endpoint,mo,progressCb){
-  let sinceId='0',allData=[],page=1,source='live';
-  while(true){
-    progressCb(mo,page);
-    const r=await fetch('/api/'+endpoint+'?month='+mo+'&since_id='+sinceId);
-    if(!r.ok)throw new Error(r.status+' '+r.statusText);
-    const ct=r.headers.get('content-type')||'';
-    if(!ct.includes('json'))throw new Error('Non-JSON response');
-    const d=await r.json();
-    if(d.error)throw new Error(d.error);
-    source=d.source;
-    if(d.data)allData=allData.concat(d.data);
-    if(source==='cache'||!d.hasMore)break;
-    sinceId=d.lastId;page++;
-    await new Promise(resolve=>setTimeout(resolve,200));
-  }
-  return{data:allData,source};
-}
-
-async function cacheMonth(endpoint,mo,data){
-  try{
-    const r=await fetch('/api/'+endpoint+'?month='+mo+'&action=cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    await r.json();
-  }catch(e){console.error('Cache failed',endpoint,mo,e)}
-}
-
 function isCompleteMonth(mo){
   const now=new Date();const current=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   return mo<current;
+}
+
+function openCacheModal(){
+  document.getElementById('cacheModal').classList.add('open');
+  loadCacheList();
+}
+function closeCacheModal(){document.getElementById('cacheModal').classList.remove('open')}
+
+async function loadCacheList(){
+  const box=document.getElementById('cacheList');
+  box.innerHTML='<div style="text-align:center;color:var(--text2);padding:20px">Loading…</div>';
+  if(!adminKey&&!await promptAdminKey())return closeCacheModal();
+  try{
+    const r=await fetch('/api/clear-cache',{headers:adminHeaders()});
+    if(r.status===401){adminKey='';sessionStorage.removeItem('adminKey');box.innerHTML='<div style="color:var(--red);padding:12px">Wrong admin key. <button class="btn-muted" onclick="loadCacheList()">Retry</button></div>';return}
+    const j=await r.json();
+    if(!j.blobs||j.blobs.length===0){
+      box.innerHTML='<div style="text-align:center;color:var(--text2);padding:20px">No cached data yet</div>';
+      return;
+    }
+    const fmtSize=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
+    const fmtDate=s=>{const d=new Date(s);return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+    box.innerHTML=j.blobs.map(b=>
+      '<div class="cache-row"><div><div class="key">'+b.key+'</div><div class="meta">'+fmtSize(b.size)+' · cached '+fmtDate(b.uploadedAt)+'</div></div>'+
+      '<button class="btn-danger" onclick="clearOneCache(\''+b.key+'\',this)">Clear</button></div>'
+    ).join('');
+  }catch(e){
+    box.innerHTML='<div style="color:var(--red);padding:12px">Failed to load: '+e.message+'</div>';
+  }
+}
+
+async function clearOneCache(key,btn){
+  btn.disabled=true;btn.textContent='…';
+  try{
+    const r=await fetch('/api/clear-cache?key='+encodeURIComponent(key),{method:'DELETE',headers:adminHeaders()});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    // Also evict any session cache entry for this month so next load is fresh.
+    const m=key.match(/^(orders|drafts)-(\d{4}-\d{2})\.json$/);
+    if(m)sessionCache.delete((m[1]==='orders'?'orders:':'drafts:')+m[2]);
+    loadCacheList();
+  }catch(e){
+    btn.disabled=false;btn.textContent='Clear';
+    alert('Failed: '+e.message);
+  }
+}
+
+async function clearAllCache(){
+  if(!confirm('Clear all cached months? Next load will refetch everything from Shopify.'))return;
+  const btn=document.getElementById('clearAllBtn');
+  btn.disabled=true;btn.textContent='Clearing…';
+  try{
+    const r=await fetch('/api/clear-cache?all=1',{method:'DELETE',headers:adminHeaders()});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    sessionCache.clear();
+    loadCacheList();
+  }catch(e){
+    alert('Failed: '+e.message);
+  }finally{
+    btn.disabled=false;btn.textContent='Clear all';
+  }
+}
+
+async function promptAdminKey(){
+  const k=prompt('Admin key required to manage cache:');
+  if(!k)return false;
+  adminKey=k;
+  sessionStorage.setItem('adminKey',k);
+  return true;
 }
 
 async function loadAll(){
@@ -160,29 +273,40 @@ async function loadAll(){
   allOrders=[];allDrafts=[];
 
   for(const mo of months){
+    const cacheKeyO='orders:'+mo, cacheKeyD='drafts:'+mo;
     try{
-      const result=await fetchMonthAllPages('orders',mo,(m,pg)=>{
-        document.getElementById('loadingDetail').textContent='Orders '+m+' page '+pg+'...';
-        document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
-      });
+      let result;
+      if(sessionCache.has(cacheKeyO)){
+        result=sessionCache.get(cacheKeyO);
+        document.getElementById('loadingDetail').textContent='Orders '+mo+' (session cache)';
+      }else{
+        result=await fetchMonth('orders',mo,m=>{
+          document.getElementById('loadingDetail').textContent='Orders '+m+'...';
+          document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
+        });
+        // Only session-cache the current (incomplete) month; completed months
+        // are already served from blob cache by the API.
+        if(!isCompleteMonth(mo))sessionCache.set(cacheKeyO,result);
+      }
       allOrders=allOrders.concat(result.data);
       if(result.source==='cache')cached++;else fetched++;
-      if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0){
-        await cacheMonth('orders',mo,result.data);
-      }
     }catch(e){console.error('Orders '+mo+':',e.message)}
     done++;
 
     try{
-      const result=await fetchMonthAllPages('draft-orders',mo,(m,pg)=>{
-        document.getElementById('loadingDetail').textContent='Drafts '+m+' page '+pg+'...';
-        document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
-      });
+      let result;
+      if(sessionCache.has(cacheKeyD)){
+        result=sessionCache.get(cacheKeyD);
+        document.getElementById('loadingDetail').textContent='Drafts '+mo+' (session cache)';
+      }else{
+        result=await fetchMonth('draft-orders',mo,m=>{
+          document.getElementById('loadingDetail').textContent='Drafts '+m+'...';
+          document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
+        });
+        if(!isCompleteMonth(mo))sessionCache.set(cacheKeyD,result);
+      }
       allDrafts=allDrafts.concat(result.data);
       if(result.source==='cache')cached++;else fetched++;
-      if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0){
-        await cacheMonth('draft-orders',mo,result.data);
-      }
     }catch(e){console.error('Drafts '+mo+':',e.message)}
     done++;
   }
@@ -226,6 +350,49 @@ function rT3(o){const sources=new Set(),reps={};o.forEach(x=>{const src=x.source
 function rT4(d){const vendors={},rs=new Set();d.forEach(x=>{if(!x.vendor)return;rs.add(x.rep);if(!vendors[x.vendor])vendors[x.vendor]={};vendors[x.vendor][x.rep]=(vendors[x.vendor][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4').innerHTML=h}
 function rT5(d){const statuses=new Set(),reps={};d.forEach(x=>{statuses.add(x.status);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][x.status]=(reps[x.rep][x.status]||0)+1});const ss=[...statuses].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+='<tr><td>'+rep+'</td>';let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v;tot[s]=(tot[s]||0)+v});h+='<td class="num">'+rt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+='<td class="num">'+(tot[s]||0)+'</td>';g+=tot[s]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t5').innerHTML=h}
 function rT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]={rev:0,cnt:0};ch[x.sales_type].rev+=x.subtotal;ch[x.sales_type].cnt++});const s=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';s.forEach(([c,d])=>{h+='<tr><td>'+c+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td><td class="num">'+pct(tr?d.rev/tr:0)+'</td></tr>'});h+='<tr class="grand-total"><td>Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td><td class="num">100%</td></tr></tbody></table>';document.getElementById('t6').innerHTML=h}
-(function(){const n=new Date();document.getElementById('dateFrom').value=new Date(n.getFullYear(),n.getMonth(),1).toISOString().split('T')[0];document.getElementById('dateTo').value=n.toISOString().split('T')[0]})();
+function promptLogin(){
+  document.getElementById('loginModal').classList.add('open');
+  setTimeout(()=>document.getElementById('loginPwd').focus(),50);
+}
+function closeLogin(){document.getElementById('loginModal').classList.remove('open')}
+
+async function submitLogin(){
+  const pwd=document.getElementById('loginPwd').value;
+  const errBox=document.getElementById('loginError');
+  errBox.style.display='none';
+  if(!pwd){errBox.textContent='Enter a password';errBox.style.display='block';return}
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
+    if(!r.ok){
+      errBox.textContent='Wrong password';errBox.style.display='block';return;
+    }
+    dashKey=pwd;
+    sessionStorage.setItem('dashKey',pwd);
+    document.getElementById('loginPwd').value='';
+    closeLogin();
+  }catch(e){
+    errBox.textContent='Error: '+e.message;errBox.style.display='block';
+  }
+}
+
+async function boot(){
+  // Default date range
+  const n=new Date();
+  document.getElementById('dateFrom').value=new Date(n.getFullYear(),n.getMonth(),1).toISOString().split('T')[0];
+  document.getElementById('dateTo').value=n.toISOString().split('T')[0];
+
+  // Check if dashboard auth is required
+  try{
+    const r=await fetch('/api/login');
+    const j=await r.json();
+    if(j.required&&!dashKey){
+      promptLogin();
+    }
+  }catch(e){
+    // If /api/login is unavailable, fall through — data endpoints will
+    // reject with 401 and trigger a login prompt at that point.
+  }
+}
+boot();
 </script>
 </body></html>
