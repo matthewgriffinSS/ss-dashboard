@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d0d0d;--bg2:#1a1a1a;--bg3:#252525;--bg4:#333;--border:#333;--text:#e5e5e5;--text2:#999;--text3:#666;--accent:#e85d24;--accent2:#ff7a3d;--green:#34c759;--red:#ff453a;--yellow:#ffd60a;--blue:#0a84ff;--purple:#bf5af2;--teal:#30d5c8}
+:root{--bg:#0d0d0d;--bg2:#1a1a1a;--bg3:#252525;--bg4:#333;--border:#333;--text:#e5e5e5;--text2:#999;--text3:#666;--accent:#e85d24;--accent2:#ff7a3d;--green:#34c759;--red:#ff453a;--yellow:#ffd60a;--blue:#0a84ff;--teal:#30d5c8}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
 .header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .header h1{font-size:18px;font-weight:600;color:var(--accent);letter-spacing:1px}
@@ -50,7 +50,6 @@ tr:hover td{background:var(--bg3)}
 .grand-total td{font-weight:600;border-top:2px solid var(--accent);background:var(--bg3);color:#fff}
 .table-scroll{overflow-x:auto;max-height:400px;overflow-y:auto}
 .num{text-align:right;font-variant-numeric:tabular-nums}
-.err{font-size:11px;color:var(--red);margin-top:4px}
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:1fr}}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -76,7 +75,7 @@ tr:hover td{background:var(--bg3)}
 <button class="go-btn" id="goBtn" onclick="loadAll()">Load data</button>
 <span class="cache-info" id="cacheInfo"></span>
 </div>
-<div id="loadingArea" style="display:none" class="loading"><div id="loadingMsg">Loading...</div><div class="progress-bar"><div class="progress-fill" id="pf" style="width:0%"></div></div><div id="loadingDetail" style="margin-top:8px;font-size:13px"></div><div id="loadingErrors" class="err"></div></div>
+<div id="loadingArea" style="display:none" class="loading"><div>Loading from Shopify...</div><div class="progress-bar"><div class="progress-fill" id="pf" style="width:0%"></div></div><div id="loadingDetail" style="margin-top:8px;font-size:13px"></div></div>
 <div id="dashboard" style="display:none">
 <div class="filters" id="filters"></div>
 <div class="kpi-row" id="kpis"></div>
@@ -124,60 +123,113 @@ function sp(p,el){
   loadAll();
 }
 
-async function fetchMonth(endpoint,mo){
-  const r=await fetch('/api/'+endpoint+'?month='+mo);
-  if(!r.ok)throw new Error(r.status+' '+r.statusText);
-  const ct=r.headers.get('content-type')||'';
-  if(!ct.includes('json'))throw new Error('Non-JSON response');
-  return await r.json();
+// Fetch all pages for one month of one endpoint
+async function fetchMonthAllPages(endpoint, mo, progressCb) {
+  let sinceId = '0';
+  let allData = [];
+  let page = 1;
+  let source = 'live';
+
+  while (true) {
+    progressCb(mo, page);
+    const r = await fetch('/api/' + endpoint + '?month=' + mo + '&since_id=' + sinceId);
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('json')) throw new Error('Non-JSON response');
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+
+    source = d.source;
+    if (d.data) allData = allData.concat(d.data);
+
+    // If cached, we got everything in one call
+    if (source === 'cache' || !d.hasMore) break;
+
+    sinceId = d.lastId;
+    page++;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  return { data: allData, source };
 }
 
-async function loadAll(){
-  const dMin=document.getElementById('dateFrom').value,dMax=document.getElementById('dateTo').value;
-  if(!dMin||!dMax){alert('Select a date range');return}
-  document.getElementById('goBtn').disabled=true;
-  document.getElementById('loadingArea').style.display='block';
-  document.getElementById('dashboard').style.display='none';
-  document.getElementById('loadingErrors').textContent='';
+// Cache a completed month's data to blob
+async function cacheMonth(endpoint, mo, data) {
+  try {
+    await fetch('/api/' + endpoint + '?month=' + mo + '&action=cache', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  } catch (e) { console.error('Cache write failed for ' + mo, e); }
+}
 
-  const months=getMonths(dMin,dMax);
-  const total=months.length*2;
-  let done=0,cached=0,fetched=0,errors=[];
-  allOrders=[];allDrafts=[];
+function isCompleteMonth(mo) {
+  const now = new Date();
+  const current = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  return mo < current;
+}
 
-  for(const mo of months){
-    document.getElementById('loadingDetail').textContent='Orders '+mo+'...';
-    document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
-    try{
-      const d=await fetchMonth('orders',mo);
-      if(d.data)allOrders=allOrders.concat(d.data);
-      if(d.source==='cache')cached++;else fetched++;
-    }catch(e){errors.push('Orders '+mo+': '+e.message)}
+async function loadAll() {
+  const dMin = document.getElementById('dateFrom').value;
+  const dMax = document.getElementById('dateTo').value;
+  if (!dMin || !dMax) { alert('Select a date range'); return; }
+
+  document.getElementById('goBtn').disabled = true;
+  document.getElementById('loadingArea').style.display = 'block';
+  document.getElementById('dashboard').style.display = 'none';
+
+  const months = getMonths(dMin, dMax);
+  const total = months.length * 2;
+  let done = 0, cached = 0, fetched = 0;
+  allOrders = []; allDrafts = [];
+
+  for (const mo of months) {
+    // Orders
+    try {
+      const result = await fetchMonthAllPages('orders', mo, (m, pg) => {
+        document.getElementById('loadingDetail').textContent = 'Orders ' + m + ' page ' + pg + '...';
+        document.getElementById('pf').style.width = Math.round(done / total * 100) + '%';
+      });
+      allOrders = allOrders.concat(result.data);
+      if (result.source === 'cache') cached++; else fetched++;
+
+      // Cache if complete month and was fetched live
+      if (result.source === 'live' && isCompleteMonth(mo) && result.data.length > 0) {
+        cacheMonth('orders', mo, result.data); // fire and forget
+      }
+    } catch (e) { console.error('Orders ' + mo + ':', e.message); }
     done++;
 
-    document.getElementById('loadingDetail').textContent='Drafts '+mo+'...';
-    document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
-    try{
-      const d=await fetchMonth('draft-orders',mo);
-      if(d.data)allDrafts=allDrafts.concat(d.data);
-      if(d.source==='cache')cached++;else fetched++;
-    }catch(e){errors.push('Drafts '+mo+': '+e.message)}
+    // Drafts
+    try {
+      const result = await fetchMonthAllPages('draft-orders', mo, (m, pg) => {
+        document.getElementById('loadingDetail').textContent = 'Drafts ' + m + ' page ' + pg + '...';
+        document.getElementById('pf').style.width = Math.round(done / total * 100) + '%';
+      });
+      allDrafts = allDrafts.concat(result.data);
+      if (result.source === 'cache') cached++; else fetched++;
+
+      if (result.source === 'live' && isCompleteMonth(mo) && result.data.length > 0) {
+        cacheMonth('draft-orders', mo, result.data);
+      }
+    } catch (e) { console.error('Drafts ' + mo + ':', e.message); }
     done++;
   }
 
-  const startD=new Date(dMin+'T00:00:00'),endD=new Date(dMax+'T23:59:59');
-  allOrders=allOrders.filter(o=>{const d=new Date(o.created_at);return d>=startD&&d<=endD});
-  allDrafts=allDrafts.filter(o=>{const d=new Date(o.created_at);return d>=startD&&d<=endD});
+  // Filter to exact date range
+  const startD = new Date(dMin + 'T00:00:00'), endD = new Date(dMax + 'T23:59:59');
+  allOrders = allOrders.filter(o => { const d = new Date(o.created_at); return d >= startD && d <= endD; });
+  allDrafts = allDrafts.filter(o => { const d = new Date(o.created_at); return d >= startD && d <= endD; });
 
-  document.getElementById('pf').style.width='100%';
-  document.getElementById('cacheInfo').textContent=(cached?cached+' cached, ':'')+fetched+' live'+(errors.length?' | '+errors.length+' errors':'');
-  if(errors.length)document.getElementById('loadingErrors').textContent=errors.join(' | ');
-  document.getElementById('loadingArea').style.display='none';
-  document.getElementById('dashboard').style.display='block';
-  document.getElementById('goBtn').disabled=false;
-  document.getElementById('status').textContent=dMin+' to '+dMax+' | '+allOrders.length+' order lines | '+allDrafts.length+' draft lines | '+new Date().toLocaleTimeString();
+  document.getElementById('pf').style.width = '100%';
+  document.getElementById('cacheInfo').textContent = (cached ? cached + ' cached, ' : '') + fetched + ' live';
+  document.getElementById('loadingArea').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  document.getElementById('goBtn').disabled = false;
+  document.getElementById('status').textContent = dMin + ' to ' + dMax + ' | ' + allOrders.length + ' order lines | ' + allDrafts.length + ' draft lines | ' + new Date().toLocaleTimeString();
 
-  filters={rep:new Set(),month:new Set()};buildFilters();render();
+  filters = { rep: new Set(), month: new Set() }; buildFilters(); render();
 }
 
 function buildFilters(){
