@@ -50,6 +50,7 @@ tr:hover td{background:var(--bg3)}
 .grand-total td{font-weight:600;border-top:2px solid var(--accent);background:var(--bg3);color:#fff}
 .table-scroll{overflow-x:auto;max-height:400px;overflow-y:auto}
 .num{text-align:right;font-variant-numeric:tabular-nums}
+.scope-note{font-size:11px;color:var(--yellow);padding:8px 16px;background:var(--bg2);border:1px solid var(--yellow);border-radius:8px;margin-bottom:16px}
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:1fr}}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -57,17 +58,13 @@ tr:hover td{background:var(--bg3)}
 <body>
 <div class="header"><div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Select a date range to load data</div></div></div>
 <div class="container">
+<div class="scope-note">Orders limited to last 60 days. Drafts available for all dates. Enable <strong>read_all_orders</strong> scope to unlock full history.</div>
 <div class="date-bar">
 <label>Range</label>
 <button class="date-btn" onclick="sp('thisWeek',this)">This week</button>
 <button class="date-btn" onclick="sp('thisMonth',this)">This month</button>
 <button class="date-btn" onclick="sp('lastMonth',this)">Last month</button>
-<button class="date-btn" onclick="sp('thisQuarter',this)">This quarter</button>
-<button class="date-btn" onclick="sp('thisYear',this)">This year</button>
-<button class="date-btn" onclick="sp('lastYear',this)">Last year</button>
-<button class="date-btn" onclick="sp('last2Years',this)">Last 2 years</button>
-<button class="date-btn" onclick="sp('last3Years',this)">Last 3 years</button>
-<button class="date-btn" onclick="sp('allTime',this)">All time</button>
+<button class="date-btn" onclick="sp('last60',this)">Last 60 days</button>
 <span class="sep">|</span>
 <input type="date" id="dateFrom" class="date-input">
 <span class="sep">to</span>
@@ -110,12 +107,7 @@ function sp(p,el){
   if(p==='thisWeek'){const d=now.getDay(),diff=d===0?6:d-1;f=new Date(now);f.setDate(now.getDate()-diff);t=now}
   else if(p==='thisMonth'){f=new Date(y,m,1);t=now}
   else if(p==='lastMonth'){f=new Date(y,m-1,1);t=new Date(y,m,0)}
-  else if(p==='thisQuarter'){const q=Math.floor(m/3)*3;f=new Date(y,q,1);t=now}
-  else if(p==='thisYear'){f=new Date(y,0,1);t=now}
-  else if(p==='lastYear'){f=new Date(y-1,0,1);t=new Date(y-1,11,31)}
-  else if(p==='last2Years'){f=new Date(y-2,0,1);t=now}
-  else if(p==='last3Years'){f=new Date(y-3,0,1);t=now}
-  else if(p==='allTime'){f=new Date(2017,11,1);t=now}
+  else if(p==='last60'){f=new Date(now);f.setDate(now.getDate()-60);t=now}
   document.getElementById('dateFrom').value=f.toISOString().split('T')[0];
   document.getElementById('dateTo').value=t.toISOString().split('T')[0];
   document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('active'));
@@ -123,113 +115,82 @@ function sp(p,el){
   loadAll();
 }
 
-// Fetch all pages for one month of one endpoint
-async function fetchMonthAllPages(endpoint, mo, progressCb) {
-  let sinceId = '0';
-  let allData = [];
-  let page = 1;
-  let source = 'live';
-
-  while (true) {
-    progressCb(mo, page);
-    const r = await fetch('/api/' + endpoint + '?month=' + mo + '&since_id=' + sinceId);
-    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-    const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('json')) throw new Error('Non-JSON response');
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-
-    source = d.source;
-    if (d.data) allData = allData.concat(d.data);
-
-    // If cached, we got everything in one call
-    if (source === 'cache' || !d.hasMore) break;
-
-    sinceId = d.lastId;
-    page++;
-    await new Promise(resolve => setTimeout(resolve, 200));
+async function fetchMonthAllPages(endpoint,mo,progressCb){
+  let sinceId='0',allData=[],page=1,source='live';
+  while(true){
+    progressCb(mo,page);
+    const r=await fetch('/api/'+endpoint+'?month='+mo+'&since_id='+sinceId);
+    if(!r.ok)throw new Error(r.status+' '+r.statusText);
+    const ct=r.headers.get('content-type')||'';
+    if(!ct.includes('json'))throw new Error('Non-JSON response');
+    const d=await r.json();
+    if(d.error)throw new Error(d.error);
+    source=d.source;
+    if(d.data)allData=allData.concat(d.data);
+    if(source==='cache'||!d.hasMore)break;
+    sinceId=d.lastId;page++;
+    await new Promise(resolve=>setTimeout(resolve,200));
   }
-
-  return { data: allData, source };
+  return{data:allData,source};
 }
 
-// Cache a completed month's data to blob
-async function cacheMonth(endpoint, mo, data) {
-  try {
-    await fetch('/api/' + endpoint + '?month=' + mo + '&action=cache', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-  } catch (e) { console.error('Cache write failed for ' + mo, e); }
+async function cacheMonth(endpoint,mo,data){
+  try{await fetch('/api/'+endpoint+'?month='+mo+'&action=cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}catch(e){console.error('Cache failed',mo,e)}
 }
 
-function isCompleteMonth(mo) {
-  const now = new Date();
-  const current = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-  return mo < current;
+function isCompleteMonth(mo){
+  const now=new Date();const current=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  return mo<current;
 }
 
-async function loadAll() {
-  const dMin = document.getElementById('dateFrom').value;
-  const dMax = document.getElementById('dateTo').value;
-  if (!dMin || !dMax) { alert('Select a date range'); return; }
+async function loadAll(){
+  const dMin=document.getElementById('dateFrom').value,dMax=document.getElementById('dateTo').value;
+  if(!dMin||!dMax){alert('Select a date range');return}
+  document.getElementById('goBtn').disabled=true;
+  document.getElementById('loadingArea').style.display='block';
+  document.getElementById('dashboard').style.display='none';
 
-  document.getElementById('goBtn').disabled = true;
-  document.getElementById('loadingArea').style.display = 'block';
-  document.getElementById('dashboard').style.display = 'none';
+  const months=getMonths(dMin,dMax);
+  const total=months.length*2;
+  let done=0,cached=0,fetched=0;
+  allOrders=[];allDrafts=[];
 
-  const months = getMonths(dMin, dMax);
-  const total = months.length * 2;
-  let done = 0, cached = 0, fetched = 0;
-  allOrders = []; allDrafts = [];
-
-  for (const mo of months) {
-    // Orders
-    try {
-      const result = await fetchMonthAllPages('orders', mo, (m, pg) => {
-        document.getElementById('loadingDetail').textContent = 'Orders ' + m + ' page ' + pg + '...';
-        document.getElementById('pf').style.width = Math.round(done / total * 100) + '%';
+  for(const mo of months){
+    try{
+      const result=await fetchMonthAllPages('orders',mo,(m,pg)=>{
+        document.getElementById('loadingDetail').textContent='Orders '+m+' page '+pg+'...';
+        document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
       });
-      allOrders = allOrders.concat(result.data);
-      if (result.source === 'cache') cached++; else fetched++;
-
-      // Cache if complete month and was fetched live
-      if (result.source === 'live' && isCompleteMonth(mo) && result.data.length > 0) {
-        cacheMonth('orders', mo, result.data); // fire and forget
-      }
-    } catch (e) { console.error('Orders ' + mo + ':', e.message); }
+      allOrders=allOrders.concat(result.data);
+      if(result.source==='cache')cached++;else fetched++;
+      if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0)cacheMonth('orders',mo,result.data);
+    }catch(e){console.error('Orders '+mo+':',e.message)}
     done++;
 
-    // Drafts
-    try {
-      const result = await fetchMonthAllPages('draft-orders', mo, (m, pg) => {
-        document.getElementById('loadingDetail').textContent = 'Drafts ' + m + ' page ' + pg + '...';
-        document.getElementById('pf').style.width = Math.round(done / total * 100) + '%';
+    try{
+      const result=await fetchMonthAllPages('draft-orders',mo,(m,pg)=>{
+        document.getElementById('loadingDetail').textContent='Drafts '+m+' page '+pg+'...';
+        document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
       });
-      allDrafts = allDrafts.concat(result.data);
-      if (result.source === 'cache') cached++; else fetched++;
-
-      if (result.source === 'live' && isCompleteMonth(mo) && result.data.length > 0) {
-        cacheMonth('draft-orders', mo, result.data);
-      }
-    } catch (e) { console.error('Drafts ' + mo + ':', e.message); }
+      allDrafts=allDrafts.concat(result.data);
+      if(result.source==='cache')cached++;else fetched++;
+      if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0)cacheMonth('draft-orders',mo,result.data);
+    }catch(e){console.error('Drafts '+mo+':',e.message)}
     done++;
   }
 
-  // Filter to exact date range
-  const startD = new Date(dMin + 'T00:00:00'), endD = new Date(dMax + 'T23:59:59');
-  allOrders = allOrders.filter(o => { const d = new Date(o.created_at); return d >= startD && d <= endD; });
-  allDrafts = allDrafts.filter(o => { const d = new Date(o.created_at); return d >= startD && d <= endD; });
+  const startD=new Date(dMin+'T00:00:00'),endD=new Date(dMax+'T23:59:59');
+  allOrders=allOrders.filter(o=>{const d=new Date(o.created_at);return d>=startD&&d<=endD});
+  allDrafts=allDrafts.filter(o=>{const d=new Date(o.created_at);return d>=startD&&d<=endD});
 
-  document.getElementById('pf').style.width = '100%';
-  document.getElementById('cacheInfo').textContent = (cached ? cached + ' cached, ' : '') + fetched + ' live';
-  document.getElementById('loadingArea').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
-  document.getElementById('goBtn').disabled = false;
-  document.getElementById('status').textContent = dMin + ' to ' + dMax + ' | ' + allOrders.length + ' order lines | ' + allDrafts.length + ' draft lines | ' + new Date().toLocaleTimeString();
+  document.getElementById('pf').style.width='100%';
+  document.getElementById('cacheInfo').textContent=(cached?cached+' cached, ':'')+fetched+' live';
+  document.getElementById('loadingArea').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('goBtn').disabled=false;
+  document.getElementById('status').textContent=dMin+' to '+dMax+' | '+allOrders.length+' order lines | '+allDrafts.length+' draft lines | '+new Date().toLocaleTimeString();
 
-  filters = { rep: new Set(), month: new Set() }; buildFilters(); render();
+  filters={rep:new Set(),month:new Set()};buildFilters();render();
 }
 
 function buildFilters(){
