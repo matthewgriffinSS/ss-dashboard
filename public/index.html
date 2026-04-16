@@ -49,6 +49,7 @@ td{padding:6px;border-bottom:1px solid var(--bg3);white-space:nowrap;color:var(-
 tr:hover td{background:var(--bg3)}
 .grand-total td{font-weight:600;border-top:2px solid var(--accent);background:var(--bg3);color:#fff}
 .table-scroll{overflow-x:auto;max-height:400px;overflow-y:auto}
+.table-scroll-tall{overflow-x:auto}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .scope-note{font-size:11px;color:var(--yellow);padding:8px 16px;background:var(--bg2);border:1px solid var(--yellow);border-radius:8px;margin-bottom:16px}
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:1fr}}
@@ -83,7 +84,7 @@ tr:hover td{background:var(--bg3)}
 <div class="card" style="margin-bottom:16px"><h3>Rep summary</h3><div class="table-scroll" id="t1"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Draft sales by rep x sales type</h3><div class="table-scroll" id="t2"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Order count by rep x source</h3><div class="table-scroll" id="t3"></div></div>
-<div class="card" style="margin-bottom:16px"><h3>Vendor x rep</h3><div class="table-scroll" id="t4"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Vendor x rep</h3><div class="table-scroll-tall" id="t4"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Rep x draft status</h3><div class="table-scroll" id="t5"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Channel performance</h3><div class="table-scroll" id="t6"></div></div>
 </div></div>
@@ -137,8 +138,7 @@ async function fetchMonthAllPages(endpoint,mo,progressCb){
 async function cacheMonth(endpoint,mo,data){
   try{
     const r=await fetch('/api/'+endpoint+'?month='+mo+'&action=cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    const j=await r.json();
-    console.log('CACHE WRITE',endpoint,mo,j);
+    await r.json();
   }catch(e){console.error('Cache failed',endpoint,mo,e)}
 }
 
@@ -155,7 +155,6 @@ async function loadAll(){
   document.getElementById('dashboard').style.display='none';
 
   const months=getMonths(dMin,dMax);
-  console.log('LOADING MONTHS:',months);
   const total=months.length*2;
   let done=0,cached=0,fetched=0;
   allOrders=[];allDrafts=[];
@@ -167,10 +166,8 @@ async function loadAll(){
         document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
       });
       allOrders=allOrders.concat(result.data);
-      console.log('ORDERS',mo,'source:',result.source,'items:',result.data.length,'isComplete:',isCompleteMonth(mo));
       if(result.source==='cache')cached++;else fetched++;
       if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0){
-        console.log('TRIGGERING CACHE WRITE for orders',mo);
         await cacheMonth('orders',mo,result.data);
       }
     }catch(e){console.error('Orders '+mo+':',e.message)}
@@ -182,10 +179,8 @@ async function loadAll(){
         document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
       });
       allDrafts=allDrafts.concat(result.data);
-      console.log('DRAFTS',mo,'source:',result.source,'items:',result.data.length,'isComplete:',isCompleteMonth(mo));
       if(result.source==='cache')cached++;else fetched++;
       if(result.source==='live'&&isCompleteMonth(mo)&&result.data.length>0){
-        console.log('TRIGGERING CACHE WRITE for drafts',mo);
         await cacheMonth('draft-orders',mo,result.data);
       }
     }catch(e){console.error('Drafts '+mo+':',e.message)}
