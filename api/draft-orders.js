@@ -1,7 +1,5 @@
 import { put, list } from '@vercel/blob';
 
-export const config = { maxDuration: 60 };
-
 const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
 const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
 
@@ -75,6 +73,9 @@ export default async function handler(req, res) {
   }
 
   const month = req.query.month;
+  const sinceId = req.query.since_id || '0';
+  const action = req.query.action || '';
+
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ error: 'month param required (YYYY-MM)' });
   }
@@ -85,15 +86,30 @@ export default async function handler(req, res) {
   const isComplete = month < currentMonth;
   const blobKey = `drafts-${month}.json`;
 
-  if (isComplete) {
+  if (isComplete && sinceId === '0') {
     try {
       const { blobs } = await list({ prefix: blobKey });
       if (blobs.length > 0) {
         const url = blobs[0].downloadUrl || blobs[0].url;
         const cached = await fetch(url).then(r => r.json());
-        return res.status(200).json({ data: cached, source: 'cache', month });
+        return res.status(200).json({ data: cached, source: 'cache', month, hasMore: false });
       }
     } catch (e) { console.error('Cache read error:', e.message); }
+  }
+
+  if (action === 'cache' && isComplete) {
+    try {
+      const body = await new Promise((resolve, reject) => {
+        let data = '';
+        req.on('data', chunk => data += chunk);
+        req.on('end', () => resolve(data));
+        req.on('error', reject);
+      });
+      await put(blobKey, body, { access: 'public', addRandomSuffix: false });
+      return res.status(200).json({ cached: true, month });
+    } catch (e) {
+      return res.status(500).json({ error: 'Cache write failed: ' + e.message });
+    }
   }
 
   try {
@@ -110,28 +126,16 @@ export default async function handler(req, res) {
     const dateMin = `${month}-01T00:00:00-00:00`;
     const dateMax = `${month}-${String(lastDay).padStart(2, '0')}T23:59:59-00:00`;
 
-    let allRaw = [], sinceId = 0;
-    while (true) {
-      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&updated_at_min=${dateMin}&updated_at_max=${dateMax}`;
-      const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-      if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
-      const d = await r.json();
-      const drafts = d.draft_orders || [];
-      allRaw = allRaw.concat(drafts);
-      if (drafts.length < 250) break;
-      sinceId = drafts[drafts.length - 1].id;
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
+    const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/draft_orders.json?limit=250&since_id=${sinceId}&updated_at_min=${dateMin}&updated_at_max=${dateMax}`;
+    const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+    if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
+    const d = await r.json();
+    const drafts = d.draft_orders || [];
+    const processed = processDrafts(drafts);
+    const lastId = drafts.length > 0 ? String(drafts[drafts.length - 1].id) : null;
+    const hasMore = drafts.length === 250;
 
-    const processed = processDrafts(allRaw);
-
-    if (isComplete && processed.length > 0) {
-      try {
-        await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
-      } catch (e) { console.error('Cache write error:', e.message); }
-    }
-
-    res.status(200).json({ data: processed, source: 'live', month, rawCount: allRaw.length });
+    res.status(200).json({ data: processed, source: 'live', month, hasMore, lastId, rawCount: drafts.length });
   } catch (err) {
     res.status(500).json({ error: err.message, month });
   }
