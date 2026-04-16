@@ -1,4 +1,6 @@
-import { put, list } from '@vercel/blob';
+import { put, head } from '@vercel/blob';
+import { getShopifyToken } from './_shopify.js';
+import { requireDashAuth } from './_auth.js';
 
 const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
 const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
@@ -65,17 +67,13 @@ function processOrders(orders) {
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-dash-key');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_STORE } = process.env;
-  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET || !SHOPIFY_STORE) {
-    return res.status(500).json({ error: 'Missing env vars' });
-  }
+  if (!requireDashAuth(req, res)) return;
 
+  const { SHOPIFY_STORE } = process.env;
   const month = req.query.month;
-  const sinceId = req.query.since_id || '0';
-  const action = req.query.action || '';
-
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ error: 'month param required (YYYY-MM)' });
   }
@@ -86,59 +84,47 @@ export default async function handler(req, res) {
   const isComplete = month < currentMonth;
   const blobKey = `orders-${month}.json`;
 
-  // Check cache for completed months
-  if (isComplete && sinceId === '0') {
+  if (isComplete) {
     try {
-      const { blobs } = await list({ prefix: blobKey });
-      if (blobs.length > 0) {
-        const url = blobs[0].downloadUrl || blobs[0].url;
-        const cached = await fetch(url).then(r => r.json());
-        return res.status(200).json({ data: cached, source: 'cache', month, hasMore: false });
+      const blob = await head(blobKey);
+      if (blob && blob.url) {
+        const cached = await fetch(blob.url).then(r => r.json());
+        return res.status(200).json({ data: cached, source: 'cache', month });
       }
-    } catch (e) { console.error('Cache read error:', e.message); }
-  }
-
-  // Cache write action — frontend sends combined data to store
-  if (action === 'cache' && isComplete) {
-    try {
-      const body = await new Promise((resolve, reject) => {
-        let data = '';
-        req.on('data', chunk => data += chunk);
-        req.on('end', () => resolve(data));
-        req.on('error', reject);
-      });
-      await put(blobKey, body, { access: 'public', addRandomSuffix: false });
-      return res.status(200).json({ cached: true, month });
     } catch (e) {
-      return res.status(500).json({ error: 'Cache write failed: ' + e.message });
+      // Not cached, fetch from Shopify
     }
   }
 
-  // Fetch single page from Shopify
   try {
-    const tokenRes = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${SHOPIFY_CLIENT_ID}&client_secret=${SHOPIFY_CLIENT_SECRET}`
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.status(401).json({ error: 'Token failed' });
-    const token = tokenData.access_token;
+    const token = await getShopifyToken();
 
     const lastDay = new Date(y, m, 0).getDate();
     const dateMin = `${month}-01T00:00:00-00:00`;
     const dateMax = `${month}-${String(lastDay).padStart(2, '0')}T23:59:59-00:00`;
 
-    const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/orders.json?limit=250&status=any&since_id=${sinceId}&created_at_min=${dateMin}&created_at_max=${dateMax}`;
-    const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-    if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
-    const d = await r.json();
-    const orders = d.orders || [];
-    const processed = processOrders(orders);
-    const lastId = orders.length > 0 ? String(orders[orders.length - 1].id) : null;
-    const hasMore = orders.length === 250;
+    let allRaw = [], sinceId = 0;
+    while (true) {
+      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10/orders.json?limit=250&status=any&since_id=${sinceId}&created_at_min=${dateMin}&created_at_max=${dateMax}`;
+      const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+      if (!r.ok) { return res.status(r.status).json({ error: await r.text() }); }
+      const d = await r.json();
+      const orders = d.orders || [];
+      allRaw = allRaw.concat(orders);
+      if (orders.length < 250) break;
+      sinceId = orders[orders.length - 1].id;
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
 
-    res.status(200).json({ data: processed, source: 'live', month, hasMore, lastId, rawCount: orders.length });
+    const processed = processOrders(allRaw);
+
+    if (isComplete && processed.length > 0) {
+      try {
+        await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
+      } catch (e) { console.error('Cache write error:', e.message); }
+    }
+
+    res.status(200).json({ data: processed, source: 'live', month, rawCount: allRaw.length });
   } catch (err) {
     res.status(500).json({ error: err.message, month });
   }
