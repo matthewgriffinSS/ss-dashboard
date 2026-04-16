@@ -1,5 +1,7 @@
 import { put, list } from '@vercel/blob';
 
+export const config = { maxDuration: 60 };
+
 const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
 const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
 
@@ -83,7 +85,6 @@ export default async function handler(req, res) {
   const isComplete = month < currentMonth;
   const blobKey = `drafts-${month}.json`;
 
-  // Check cache for completed months
   if (isComplete) {
     try {
       const { blobs } = await list({ prefix: blobKey });
@@ -95,7 +96,6 @@ export default async function handler(req, res) {
     } catch (e) { console.error('Cache read error:', e.message); }
   }
 
-  // Fetch from Shopify
   try {
     const tokenRes = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`, {
       method: 'POST',
@@ -125,7 +125,6 @@ export default async function handler(req, res) {
 
     const processed = processDrafts(allRaw);
 
-    // Cache completed months
     if (isComplete && processed.length > 0) {
       try {
         await put(blobKey, JSON.stringify(processed), { access: 'public', addRandomSuffix: false });
