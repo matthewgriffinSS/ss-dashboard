@@ -1,9 +1,9 @@
 import { list, del } from '@vercel/blob';
 import { requireAdmin } from './_auth.js';
 
-// Matches any cache blob we manage: monthly order/draft files or the shared
-// product catalog. Keep this strict so the endpoint can't touch anything else.
-const CACHE_KEY_RE = /^(orders-\d{4}-\d{2}\.json|drafts-\d{4}-\d{2}\.json|products-catalog\.json)$/;
+// Matches any cache blob we manage: monthly order or draft files only.
+// Keep this strict so the endpoint can't touch anything else in the blob store.
+const CACHE_KEY_RE = /^(orders|drafts)-\d{4}-\d{2}\.json$/;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
