@@ -3,6 +3,7 @@
 // we cache for 50 min with a safety margin.
 let cachedToken = null;
 let cachedAt = 0;
+let inflight = null; // Promise, dedupes concurrent cold fetches
 const TTL_MS = 50 * 60 * 1000;
 
 export async function getShopifyToken() {
@@ -16,25 +17,29 @@ export async function getShopifyToken() {
     return cachedToken;
   }
 
-  const res = await fetch(
-    `https://${SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${SHOPIFY_CLIENT_ID}&client_secret=${SHOPIFY_CLIENT_SECRET}`
+  // If another request is already fetching a fresh token, wait for it
+  // instead of kicking off a duplicate OAuth call.
+  if (inflight) return inflight;
+
+  inflight = (async () => {
+    try {
+      const res = await fetch(
+        `https://${SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `grant_type=client_credentials&client_id=${SHOPIFY_CLIENT_ID}&client_secret=${SHOPIFY_CLIENT_SECRET}`
+        }
+      );
+      const data = await res.json();
+      if (!data.access_token) throw new Error('Token fetch failed');
+      cachedToken = data.access_token;
+      cachedAt = Date.now();
+      return cachedToken;
+    } finally {
+      inflight = null;
     }
-  );
-  const data = await res.json();
-  if (!data.access_token) throw new Error('Token fetch failed');
+  })();
 
-  cachedToken = data.access_token;
-  cachedAt = now;
-  return cachedToken;
-}
-
-// Called by clear-cache endpoint so admins can force a token refresh
-// without waiting for TTL (e.g., after rotating Shopify credentials).
-export function invalidateToken() {
-  cachedToken = null;
-  cachedAt = 0;
+  return inflight;
 }

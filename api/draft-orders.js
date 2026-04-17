@@ -20,8 +20,6 @@ function classifySalesType(tags) {
   return 'Other';
 }
 
-// GraphQL returns tags as an array of strings; REST returned comma-separated string.
-// Normalize to comma-separated so downstream dashboard code works unchanged.
 function tagsToString(tags) {
   if (!tags) return '';
   if (Array.isArray(tags)) return tags.join(', ');
@@ -32,6 +30,71 @@ function idFromGid(gid) {
   if (!gid) return null;
   const m = String(gid).match(/\/(\d+)$/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+const DRAFTS_QUERY = `
+  query DraftsByRange($query: String!, $cursor: String) {
+    draftOrders(first: 50, after: $cursor, query: $query, sortKey: UPDATED_AT) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          id
+          name
+          status
+          createdAt
+          updatedAt
+          invoiceSentAt
+          tags
+          subtotalPriceSet { shopMoney { amount } }
+          order { id }
+          lineItems(first: 20) {
+            edges {
+              node {
+                title
+                vendor
+                quantity
+                sku
+                originalUnitPriceSet { shopMoney { amount } }
+                discountedTotalSet { shopMoney { amount } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+function normalizeGqlDraft(node) {
+  const lineItems = (node.lineItems?.edges || []).map(e => {
+    const li = e.node;
+    const price = parseFloat(li.originalUnitPriceSet?.shopMoney?.amount || 0);
+    const qty = li.quantity || 0;
+    const gross = price * qty;
+    const discounted = parseFloat(li.discountedTotalSet?.shopMoney?.amount || gross);
+    return {
+      title: li.title || '',
+      vendor: li.vendor || '',
+      sku: li.sku || '',
+      price,
+      quantity: qty,
+      line_revenue: discounted,
+      discount: Math.max(0, gross - discounted)
+    };
+  });
+
+  return {
+    id: idFromGid(node.id),
+    name: node.name || '',
+    status: (node.status || '').toLowerCase(),
+    created_at: node.createdAt,
+    updated_at: node.updatedAt,
+    subtotal: parseFloat(node.subtotalPriceSet?.shopMoney?.amount || 0),
+    invoice_sent_at: node.invoiceSentAt,
+    tags: node.tags || [],
+    order: node.order ? { id: idFromGid(node.order.id) } : null,
+    line_items: lineItems
+  };
 }
 
 function processDrafts(drafts) {
@@ -62,17 +125,17 @@ function processDrafts(drafts) {
       };
       const lineItems = draft.line_items || [];
       if (lineItems.length === 0) {
-        processed.push({ ...base, vendor: '', item_title: '', item_price: 0, item_qty: 0, line_revenue: 0, line_discount: 0 });
+        processed.push({ ...base, vendor: '', item_title: '', sku: '', item_price: 0, item_qty: 0, line_revenue: 0 });
       } else {
         for (const item of lineItems) {
           processed.push({
             ...base,
             vendor: item.vendor || '',
             item_title: item.title || '',
+            sku: item.sku || '',
             item_price: item.price,
             item_qty: item.quantity,
-            line_revenue: item.price * item.quantity,
-            line_discount: item.discount
+            line_revenue: item.line_revenue
           });
         }
       }
@@ -81,108 +144,70 @@ function processDrafts(drafts) {
   return processed;
 }
 
-function normalizeGqlDraft(node) {
-  const lineItems = (node.lineItems?.edges || []).map(e => {
-    const li = e.node;
-    const price = parseFloat(li.originalUnitPriceSet?.shopMoney?.amount || 0);
-    const qty = li.quantity || 0;
-    const gross = price * qty;
-    const discounted = parseFloat(li.discountedTotalSet?.shopMoney?.amount || gross);
-    return {
-      title: li.title || '',
-      vendor: li.vendor || '',
-      price,
-      quantity: qty,
-      discount: Math.max(0, gross - discounted)
-    };
-  });
-
-  return {
-    id: idFromGid(node.id),
-    name: node.name || '',
-    status: (node.status || '').toLowerCase(),
-    created_at: node.createdAt,
-    updated_at: node.updatedAt,
-    subtotal: parseFloat(node.subtotalPriceSet?.shopMoney?.amount || 0),
-    invoice_sent_at: node.invoiceSentAt,
-    tags: node.tags || [],
-    order: node.order ? { id: idFromGid(node.order.id) } : null,
-    line_items: lineItems
-  };
+function nextMonthStart(year, month) {
+  if (month === 12) return `${year + 1}-01-01`;
+  return `${year}-${String(month + 1).padStart(2, '0')}-01`;
 }
 
-const GQL_QUERY = `
-  query DraftsByRange($query: String!, $cursor: String) {
-    draftOrders(first: 100, after: $cursor, query: $query, sortKey: UPDATED_AT) {
-      pageInfo { hasNextPage endCursor }
-      edges {
-        node {
-          id
-          name
-          status
-          createdAt
-          updatedAt
-          invoiceSentAt
-          tags
-          subtotalPriceSet { shopMoney { amount } }
-          order { id }
-          lineItems(first: 100) {
-            edges {
-              node {
-                title
-                vendor
-                quantity
-                originalUnitPriceSet { shopMoney { amount } }
-                discountedTotalSet { shopMoney { amount } }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-async function fetchDraftsGraphQL(token, store, month, lastDay) {
+async function fetchDraftsGraphQL(token, store, month, year, monthNum) {
   const dateMin = `${month}-01`;
-  const dateMax = `${month}-${String(lastDay).padStart(2, '0')}`;
-  const queryStr = `created_at:>=${dateMin} created_at:<=${dateMax}`;
+  const dateMaxExclusive = nextMonthStart(year, monthNum);
+  const queryStr = `created_at:>=${dateMin} created_at:<${dateMaxExclusive}`;
 
   const url = `https://${store}.myshopify.com/admin/api/2024-10/graphql.json`;
   const all = [];
   let cursor = null;
+  let lastCost = null;
 
   while (true) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ query: GQL_QUERY, variables: { query: queryStr, cursor } })
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query: DRAFTS_QUERY, variables: { query: queryStr, cursor } }),
+        signal: ctrl.signal
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Shopify drafts request timed out');
+      throw e;
+    }
+    clearTimeout(timer);
+
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`GraphQL ${res.status}: ${body.slice(0, 500)}`);
+      throw new Error(`Drafts GraphQL ${res.status}: ${body.slice(0, 500)}`);
     }
     const json = await res.json();
     if (json.errors) {
-      throw new Error('GraphQL errors: ' + JSON.stringify(json.errors).slice(0, 500));
+      throw new Error('Drafts GraphQL errors: ' + JSON.stringify(json.errors).slice(0, 500));
     }
+
+    if (json.extensions?.cost?.throttleStatus) lastCost = json.extensions.cost;
 
     const connection = json.data?.draftOrders;
     if (!connection) break;
-
-    for (const edge of connection.edges) {
-      all.push(normalizeGqlDraft(edge.node));
-    }
+    for (const edge of connection.edges) all.push(normalizeGqlDraft(edge.node));
 
     if (!connection.pageInfo.hasNextPage) break;
     cursor = connection.pageInfo.endCursor;
-    await new Promise(r => setTimeout(r, 150));
+
+    let delay = 150;
+    if (lastCost?.throttleStatus?.currentlyAvailable != null) {
+      const avail = lastCost.throttleStatus.currentlyAvailable;
+      if (avail < 200) delay = 1000;
+      else if (avail < 500) delay = 400;
+    }
+    await new Promise(r => setTimeout(r, delay));
   }
 
-  return all;
+  return { drafts: all, lastCost };
 }
 
 export default async function handler(req, res) {
@@ -216,8 +241,7 @@ export default async function handler(req, res) {
 
   try {
     const token = await getShopifyToken();
-    const lastDay = new Date(y, m, 0).getDate();
-    const rawDrafts = await fetchDraftsGraphQL(token, SHOPIFY_STORE, month, lastDay);
+    const { drafts: rawDrafts, lastCost } = await fetchDraftsGraphQL(token, SHOPIFY_STORE, month, y, m);
     const processed = processDrafts(rawDrafts);
 
     if (isComplete && processed.length > 0) {
@@ -226,7 +250,13 @@ export default async function handler(req, res) {
       } catch (e) { console.error('Cache write error:', e.message); }
     }
 
-    res.status(200).json({ data: processed, source: 'live', month, rawCount: rawDrafts.length });
+    res.status(200).json({
+      data: processed,
+      source: 'live',
+      month,
+      rawCount: rawDrafts.length,
+      costInfo: lastCost
+    });
   } catch (err) {
     res.status(500).json({ error: err.message, month });
   }

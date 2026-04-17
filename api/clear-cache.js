@@ -1,6 +1,10 @@
 import { list, del } from '@vercel/blob';
 import { requireAdmin } from './_auth.js';
 
+// Matches any cache blob we manage: monthly order/draft files or the shared
+// product catalog. Keep this strict so the endpoint can't touch anything else.
+const CACHE_KEY_RE = /^(orders-\d{4}-\d{2}\.json|drafts-\d{4}-\d{2}\.json|products-catalog\.json)$/;
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -14,7 +18,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { blobs } = await list();
       const cached = blobs
-        .filter(b => /^(orders|drafts)-\d{4}-\d{2}\.json$/.test(b.pathname))
+        .filter(b => CACHE_KEY_RE.test(b.pathname))
         .map(b => ({
           key: b.pathname,
           size: b.size,
@@ -31,7 +35,7 @@ export default async function handler(req, res) {
 
       // Clear one specific key
       if (key) {
-        if (!/^(orders|drafts)-\d{4}-\d{2}\.json$/.test(key)) {
+        if (!CACHE_KEY_RE.test(key)) {
           return res.status(400).json({ error: 'Invalid key format' });
         }
         const { blobs } = await list({ prefix: key });
@@ -44,9 +48,7 @@ export default async function handler(req, res) {
       // Clear everything
       if (all === '1' || all === 'true') {
         const { blobs } = await list();
-        const toDelete = blobs.filter(b =>
-          /^(orders|drafts)-\d{4}-\d{2}\.json$/.test(b.pathname)
-        );
+        const toDelete = blobs.filter(b => CACHE_KEY_RE.test(b.pathname));
         if (toDelete.length === 0) return res.status(200).json({ cleared: [] });
         await Promise.all(toDelete.map(b => del(b.url)));
         return res.status(200).json({ cleared: toDelete.map(b => b.pathname) });
