@@ -75,7 +75,6 @@ tr:hover td{background:var(--bg3)}
 <body>
 <div class="header"><div><h1>SHOCK SURPLUS</h1><div class="meta" id="status">Select a date range to load data</div></div><button class="icon-btn" onclick="openCacheModal()" title="Manage cache">⚙</button></div>
 <div class="container">
-<div class="scope-note">Orders limited to last 60 days. Drafts available for all dates. Enable <strong>read_all_orders</strong> scope to unlock full history.</div>
 <div class="date-bar">
 <label>Range</label>
 <button class="date-btn" onclick="sp('thisWeek',this)">This week</button>
@@ -91,6 +90,7 @@ tr:hover td{background:var(--bg3)}
 </div>
 <div id="loadingArea" style="display:none" class="loading"><div>Loading from Shopify...</div><div class="progress-bar"><div class="progress-fill" id="pf" style="width:0%"></div></div><div id="loadingDetail" style="margin-top:8px;font-size:13px"></div></div>
 <div id="dashboard" style="display:none">
+<div id="errBanner" style="display:none;padding:10px 14px;background:rgba(255,69,58,0.15);border:1px solid var(--red);border-radius:8px;color:#ffb3ae;font-size:12px;margin-bottom:12px;line-height:1.5"></div>
 <div class="filters" id="filters"></div>
 <div class="kpi-row" id="kpis"></div>
 <div class="grid-2">
@@ -103,6 +103,10 @@ tr:hover td{background:var(--bg3)}
 <div class="card" style="margin-bottom:16px"><h3>Vendor x rep</h3><div class="table-scroll-tall" id="t4"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Rep x draft status</h3><div class="table-scroll" id="t5"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Channel performance</h3><div class="table-scroll" id="t6"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Product type × rep (revenue)</h3><div class="table-scroll-tall" id="t7"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Top 25 SKUs by revenue</h3><div class="table-scroll" id="t8"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Top 10 vehicle fits</h3><div id="t9"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Vehicle attribute breakdown</h3><div id="t10"></div></div>
 </div></div>
 <div class="modal-bg" id="loginModal">
 <div class="modal">
@@ -270,45 +274,41 @@ async function loadAll(){
   const months=getMonths(dMin,dMax);
   const total=months.length*2;
   let done=0,cached=0,fetched=0;
+  const errors=[];
   allOrders=[];allDrafts=[];
 
-  for(const mo of months){
-    const cacheKeyO='orders:'+mo, cacheKeyD='drafts:'+mo;
+  async function fetchSide(endpoint,mo,cacheKey,label){
     try{
       let result;
-      if(sessionCache.has(cacheKeyO)){
-        result=sessionCache.get(cacheKeyO);
-        document.getElementById('loadingDetail').textContent='Orders '+mo+' (session cache)';
+      if(sessionCache.has(cacheKey)){
+        result=sessionCache.get(cacheKey);
+        document.getElementById('loadingDetail').textContent=label+' '+mo+' (session cache)';
       }else{
-        result=await fetchMonth('orders',mo,m=>{
-          document.getElementById('loadingDetail').textContent='Orders '+m+'...';
+        result=await fetchMonth(endpoint,mo,m=>{
+          document.getElementById('loadingDetail').textContent=label+' '+m+'...';
           document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
         });
-        // Only session-cache the current (incomplete) month; completed months
-        // are already served from blob cache by the API.
-        if(!isCompleteMonth(mo))sessionCache.set(cacheKeyO,result);
+        if(!isCompleteMonth(mo))sessionCache.set(cacheKey,result);
       }
-      allOrders=allOrders.concat(result.data);
       if(result.source==='cache')cached++;else fetched++;
-    }catch(e){console.error('Orders '+mo+':',e.message)}
-    done++;
+      return result.data;
+    }catch(e){
+      console.error(label+' '+mo+':',e.message);
+      errors.push(label+' '+mo+': '+e.message);
+      return [];
+    }finally{
+      done++;
+    }
+  }
 
-    try{
-      let result;
-      if(sessionCache.has(cacheKeyD)){
-        result=sessionCache.get(cacheKeyD);
-        document.getElementById('loadingDetail').textContent='Drafts '+mo+' (session cache)';
-      }else{
-        result=await fetchMonth('draft-orders',mo,m=>{
-          document.getElementById('loadingDetail').textContent='Drafts '+m+'...';
-          document.getElementById('pf').style.width=Math.round(done/total*100)+'%';
-        });
-        if(!isCompleteMonth(mo))sessionCache.set(cacheKeyD,result);
-      }
-      allDrafts=allDrafts.concat(result.data);
-      if(result.source==='cache')cached++;else fetched++;
-    }catch(e){console.error('Drafts '+mo+':',e.message)}
-    done++;
+  for(const mo of months){
+    // Orders and drafts for the same month are independent → fetch in parallel
+    const [oData,dData]=await Promise.all([
+      fetchSide('orders',mo,'orders:'+mo,'Orders'),
+      fetchSide('draft-orders',mo,'drafts:'+mo,'Drafts')
+    ]);
+    allOrders=allOrders.concat(oData);
+    allDrafts=allDrafts.concat(dData);
   }
 
   const startD=new Date(dMin+'T00:00:00'),endD=new Date(dMax+'T23:59:59');
@@ -316,6 +316,13 @@ async function loadAll(){
   allDrafts=allDrafts.filter(o=>{const d=new Date(o.created_at);return d>=startD&&d<=endD});
 
   document.getElementById('pf').style.width='100%';
+  const errBanner=document.getElementById('errBanner');
+  if(errors.length){
+    errBanner.style.display='block';
+    errBanner.innerHTML='<strong>⚠ Partial data:</strong> '+errors.length+' month(s) failed to load. '+errors.map(e=>e).join(' · ');
+  }else{
+    errBanner.style.display='none';
+  }
   document.getElementById('cacheInfo').textContent=(cached?cached+' cached, ':'')+fetched+' live';
   document.getElementById('loadingArea').style.display='none';
   document.getElementById('dashboard').style.display='block';
@@ -339,7 +346,7 @@ function buildFilters(){
 function bfg(l,k,vs){let h='<div class="filter-group"><div class="filter-label">'+l+'</div><div class="filter-pills"><div class="pill active" data-key="'+k+'" data-val="__ALL__">All</div>';vs.forEach(v=>{h+='<div class="pill" data-key="'+k+'" data-val="'+v+'">'+v+'</div>'});return h+'</div></div>'}
 function af(d){return d.filter(o=>{if(filters.rep.size&&!filters.rep.has(o.rep))return false;if(filters.month.size&&!filters.month.has(MN[new Date(o.created_at).getMonth()]))return false;return true})}
 function uq(d){const s=new Set();return d.filter(o=>{const k=o.id+'_'+o.rep;if(s.has(k))return false;s.add(k);return true})}
-function render(){const o=af(allOrders),d=af(allDrafts),uo=uq(o),ud=uq(d);rKPI(uo,ud);rRC(uo);rMC(uo);rT1(uo);rT2(ud);rT3(uo);rT4(d);rT5(ud);rT6(uo)}
+function render(){const o=af(allOrders),d=af(allDrafts),uo=uq(o),ud=uq(d);rKPI(uo,ud);rRC(uo);rMC(uo);rT1(uo);rT2(ud);rT3(uo);rT4(d);rT5(ud);rT6(uo);rT7(o);rT8(o);rT9(o);rT10(o)}
 function rKPI(o,d){const rev=o.reduce((s,x)=>s+x.subtotal,0),cnt=o.length,aov=cnt?rev/cnt:0,dc=d.length,od=d.filter(x=>x.status==='open').length;document.getElementById('kpis').innerHTML=[{l:'Revenue',v:fmtD(rev)},{l:'Orders',v:cnt.toLocaleString()},{l:'AOV',v:fmtD(aov)},{l:'Drafts sent',v:dc.toLocaleString()},{l:'Open drafts',v:od.toLocaleString()}].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('')}
 const cc=['#e85d24','#ff7a3d','#30d5c8','#0a84ff','#bf5af2','#ffd60a','#34c759','#ff453a','#ff9f0a','#5e5ce6'];
 function rRC(o){const rt={};o.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);if(repChart)repChart.destroy();repChart=new Chart(document.getElementById('repChart'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}})}
@@ -350,6 +357,154 @@ function rT3(o){const sources=new Set(),reps={};o.forEach(x=>{const src=x.source
 function rT4(d){const vendors={},rs=new Set();d.forEach(x=>{if(!x.vendor)return;rs.add(x.rep);if(!vendors[x.vendor])vendors[x.vendor]={};vendors[x.vendor][x.rep]=(vendors[x.vendor][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4').innerHTML=h}
 function rT5(d){const statuses=new Set(),reps={};d.forEach(x=>{statuses.add(x.status);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][x.status]=(reps[x.rep][x.status]||0)+1});const ss=[...statuses].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+='<tr><td>'+rep+'</td>';let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v;tot[s]=(tot[s]||0)+v});h+='<td class="num">'+rt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+='<td class="num">'+(tot[s]||0)+'</td>';g+=tot[s]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t5').innerHTML=h}
 function rT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]={rev:0,cnt:0};ch[x.sales_type].rev+=x.subtotal;ch[x.sales_type].cnt++});const s=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';s.forEach(([c,d])=>{h+='<tr><td>'+c+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td><td class="num">'+pct(tr?d.rev/tr:0)+'</td></tr>'});h+='<tr class="grand-total"><td>Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td><td class="num">100%</td></tr></tbody></table>';document.getElementById('t6').innerHTML=h}
+
+// T7: Product type × rep revenue matrix.
+// Each flattened line carries its own post-discount line_revenue, so we
+// attribute revenue exactly by what the customer actually paid for that line.
+// That means a $400 shock line gets $400 credit, not the even-split of the order.
+function rT7(lines){
+  const byType={},reps=new Set();
+  lines.forEach(x=>{
+    if(!x.rep)return;
+    reps.add(x.rep);
+    const type=x.product_type||'(Uncategorized)';
+    const rev=x.line_revenue||0;
+    if(!byType[type])byType[type]={};
+    byType[type][x.rep]=(byType[type][x.rep]||0)+rev;
+  });
+  const sr=[...reps].sort();
+  const st=Object.entries(byType).sort((a,b)=>{
+    const ta=Object.values(a[1]).reduce((s,v)=>s+v,0);
+    const tb=Object.values(b[1]).reduce((s,v)=>s+v,0);
+    return tb-ta;
+  });
+  let h='<table><thead><tr><th>Product type</th>';
+  sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});
+  h+='<th class="num">Total</th></tr></thead><tbody>';
+  const repTotals={};
+  st.forEach(([type,data])=>{
+    h+='<tr><td>'+(type||'(Uncategorized)')+'</td>';
+    let tt=0;
+    sr.forEach(r=>{
+      const v=data[r]||0;
+      h+='<td class="num">'+(v?fmtD(v):'')+'</td>';
+      tt+=v;
+      repTotals[r]=(repTotals[r]||0)+v;
+    });
+    h+='<td class="num">'+fmtD(tt)+'</td></tr>';
+  });
+  h+='<tr class="grand-total"><td>Grand Total</td>';
+  let gt=0;
+  sr.forEach(r=>{h+='<td class="num">'+fmtD(repTotals[r]||0)+'</td>';gt+=repTotals[r]||0});
+  h+='<td class="num">'+fmtD(gt)+'</td></tr></tbody></table>';
+  document.getElementById('t7').innerHTML=h;
+}
+
+// T8: Top 25 SKUs by line_revenue. Each row is real per-line dollars.
+function rT8(lines){
+  const bySku={};
+  lines.forEach(x=>{
+    if(!x.sku)return;
+    if(!bySku[x.sku])bySku[x.sku]={title:x.item_title,vendor:x.vendor,type:x.product_type,rev:0,units:0};
+    bySku[x.sku].rev+=(x.line_revenue||0);
+    bySku[x.sku].units+=(x.item_qty||0);
+  });
+  const top=Object.entries(bySku).sort((a,b)=>b[1].rev-a[1].rev).slice(0,25);
+  let h='<table><thead><tr><th>SKU</th><th>Product</th><th>Vendor</th><th>Type</th><th class="num">Revenue</th><th class="num">Units</th></tr></thead><tbody>';
+  top.forEach(([sku,d])=>{
+    h+='<tr><td>'+sku+'</td><td>'+(d.title||'').slice(0,50)+'</td><td>'+(d.vendor||'')+'</td><td>'+(d.type||'')+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.units+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('t8').innerHTML=h;
+}
+
+// T9: Top 10 vehicle fits by collection name.
+// A collection counts as a "vehicle fit" if its name contains a 4-digit year
+// (2000-2029) OR matches common truck/model/make keywords. This filter keeps
+// out generic collections like "Off-Road Shocks" or "Products".
+// One line item can belong to multiple collections; each matching collection
+// gets full line_revenue credit. This measures vehicle-fit REACH, not
+// mutually-exclusive revenue buckets — so totals intentionally exceed sales.
+const VEHICLE_RE=/\b(19|20)\d{2}\b|\bford\b|\bchevy\b|\bchevrolet\b|\bgmc\b|\bram\b|\bdodge\b|\btoyota\b|\bjeep\b|\bnissan\b|\bhonda\b|\btacoma\b|\btundra\b|\bf[- ]?150\b|\bf[- ]?250\b|\bf[- ]?350\b|\bsilverado\b|\bsierra\b|\bcolorado\b|\bwrangler\b|\bjl\b|\bjk\b|\bbronco\b|\b4runner\b|\bsequoia\b|\btitan\b|\bfrontier\b|\btacoma\b|\btundra\b/i;
+function rT9(lines){
+  const byCollection={};
+  lines.forEach(x=>{
+    if(!x.product_collections||x.product_collections.length===0)return;
+    const seen=new Set();
+    x.product_collections.forEach(c=>{
+      if(!c||seen.has(c))return;
+      if(!VEHICLE_RE.test(c))return;
+      seen.add(c);
+      if(!byCollection[c])byCollection[c]={rev:0,units:0};
+      byCollection[c].rev+=(x.line_revenue||0);
+      byCollection[c].units+=(x.item_qty||0);
+    });
+  });
+  const top=Object.entries(byCollection).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
+  let h='';
+  if(top.length===0){
+    h='<div style="padding:12px;color:var(--text2);font-size:12px">No vehicle-fit collections found in this date range. Product catalog may still be loading — try reloading in a minute.</div>';
+  }else{
+    h='<table><thead><tr><th>Vehicle fit (collection)</th><th class="num">Revenue</th><th class="num">Units</th></tr></thead><tbody>';
+    top.forEach(([name,d])=>{
+      h+='<tr><td>'+name+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.units+'</td></tr>';
+    });
+    h+='</tbody></table>';
+    h+='<div style="padding:8px 2px 0;color:var(--text2);font-size:11px">A line item can fit multiple vehicles; each listed collection gets full credit. Totals reflect fit reach, not exclusive revenue buckets.</div>';
+  }
+  document.getElementById('t9').innerHTML=h;
+}
+
+// T10: Vehicle attribute breakdowns — three mini-tables side by side.
+// Product tags follow "Vehicle Make: Ford" / "Vehicle Year: 2020" / "Vehicle Lift Amount: 2.5\"" pattern.
+const TAG_PREFIXES=[
+  {label:'Make',prefix:'vehicle make:'},
+  {label:'Year',prefix:'vehicle year:'},
+  {label:'Lift',prefix:'vehicle lift amount:'}
+];
+function rT10(lines){
+  // Build one totals-map per prefix
+  const buckets=TAG_PREFIXES.map(()=>({}));
+  lines.forEach(x=>{
+    if(!x.product_tags||x.product_tags.length===0)return;
+    const tagsLower=x.product_tags.map(t=>String(t).toLowerCase().trim());
+    TAG_PREFIXES.forEach((cfg,idx)=>{
+      const matched=new Set();
+      tagsLower.forEach(t=>{
+        if(!t.startsWith(cfg.prefix))return;
+        // Extract value after prefix, strip whitespace
+        let val=t.slice(cfg.prefix.length).trim();
+        // Skip "Vehicle Year Two Digit" — same info as full year, redundant
+        if(cfg.prefix==='vehicle year:' && !/^\d{4}$/.test(val))return;
+        if(!val||matched.has(val))return;
+        matched.add(val);
+        // Display-case the value (title-case first letter of each word for makes)
+        const display=idx===0?val.split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '):val;
+        if(!buckets[idx][display])buckets[idx][display]={rev:0,units:0};
+        buckets[idx][display].rev+=(x.line_revenue||0);
+        buckets[idx][display].units+=(x.item_qty||0);
+      });
+    });
+  });
+  // Render each as its own table
+  let h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">';
+  TAG_PREFIXES.forEach((cfg,idx)=>{
+    const entries=Object.entries(buckets[idx]).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
+    h+='<div><div style="font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">'+cfg.label+'</div>';
+    if(entries.length===0){
+      h+='<div style="color:var(--text2);font-size:12px;padding:8px">No data</div>';
+    }else{
+      h+='<table><thead><tr><th>'+cfg.label+'</th><th class="num">Revenue</th><th class="num">Units</th></tr></thead><tbody>';
+      entries.forEach(([name,d])=>{
+        h+='<tr><td>'+name+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.units+'</td></tr>';
+      });
+      h+='</tbody></table>';
+    }
+    h+='</div>';
+  });
+  h+='</div>';
+  document.getElementById('t10').innerHTML=h;
+}
 function promptLogin(){
   document.getElementById('loginModal').classList.add('open');
   setTimeout(()=>document.getElementById('loginPwd').focus(),50);
