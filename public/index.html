@@ -61,6 +61,15 @@ tr:hover td{background:var(--bg3)}
 .table-scroll-tall{overflow-x:auto}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .footer{margin-top:24px;padding:16px 0;text-align:center;font-family:var(--font-industrial);font-size:11px;letter-spacing:3px;color:var(--text3);border-top:1px solid var(--border)}
+.tab-nav{display:flex;gap:0;margin-bottom:20px;padding:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.tab-btn{flex:1;padding:14px 20px;background:transparent;border:none;color:var(--text2);font-family:var(--font-industrial);font-size:15px;letter-spacing:3px;cursor:pointer;transition:all .15s;border-bottom:3px solid transparent;text-transform:uppercase}
+.tab-btn:hover{color:var(--text);background:rgba(232,93,36,.04)}
+.tab-btn.active{color:#fff;border-bottom-color:var(--accent);background:rgba(232,93,36,.08)}
+.section{margin-bottom:28px}
+.section-header{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.section-title{font-family:var(--font-industrial);font-size:28px;letter-spacing:4px;color:#fff;text-transform:uppercase;line-height:1}
+.section-subtitle{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:500}
+.section[data-section].hidden{display:none}
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:1fr}.kpi .value{font-size:26px}}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}}
 .icon-btn{background:none;border:1px solid var(--border);color:var(--text2);width:34px;height:34px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:16px;transition:all .15s}
@@ -101,18 +110,49 @@ tr:hover td{background:var(--bg3)}
 <div id="dashboard" style="display:none">
 <div id="errBanner" style="display:none;padding:10px 14px;background:rgba(255,69,58,0.15);border:1px solid var(--red);border-radius:8px;color:#ffb3ae;font-size:12px;margin-bottom:12px;line-height:1.5"></div>
 <div class="filters" id="filters"></div>
-<div class="kpi-row" id="kpis"></div>
+
+<div class="tab-nav">
+<button class="tab-btn active" data-tab="all" onclick="setTab('all')">All</button>
+<button class="tab-btn" data-tab="orders" onclick="setTab('orders')">Orders</button>
+<button class="tab-btn" data-tab="drafts" onclick="setTab('drafts')">Drafts</button>
+</div>
+
+<!-- ORDERS SECTION -->
+<div class="section" data-section="orders">
+<div class="section-header">
+<div class="section-title">Orders</div>
+<div class="section-subtitle">Completed sales pulled from Shopify</div>
+</div>
+<div class="kpi-row" id="kpis_orders"></div>
 <div class="grid-2">
-<div class="card"><h3>Revenue by rep</h3><div class="chart-container"><canvas id="repChart"></canvas></div></div>
-<div class="card"><h3>Monthly trend</h3><div class="chart-container"><canvas id="monthChart"></canvas></div></div>
+<div class="card"><h3>Revenue by rep</h3><div class="chart-container"><canvas id="repChartO"></canvas></div></div>
+<div class="card"><h3>Monthly trend</h3><div class="chart-container"><canvas id="monthChartO"></canvas></div></div>
 </div>
 <div class="card" style="margin-bottom:16px"><h3>Rep summary</h3><div class="table-scroll" id="t1"></div></div>
-<div class="card" style="margin-bottom:16px"><h3>Draft sales by rep x sales type</h3><div class="table-scroll" id="t2"></div></div>
-<div class="card" style="margin-bottom:16px"><h3>Order count by rep x source</h3><div class="table-scroll" id="t3"></div></div>
-<div class="card" style="margin-bottom:16px"><h3>Vendor x rep</h3><div class="table-scroll-tall" id="t4"></div></div>
-<div class="card" style="margin-bottom:16px"><h3>Rep x draft status</h3><div class="table-scroll" id="t5"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Orders by rep × source</h3><div class="table-scroll" id="t3"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Channel performance</h3><div class="table-scroll" id="t6"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Vendor × rep</h3><div class="table-scroll-tall" id="t4o"></div></div>
 <div class="card" style="margin-bottom:16px"><h3>Top 25 products by units sold</h3><div class="table-scroll-tall" id="t8"></div></div>
+</div>
+
+<!-- DRAFTS SECTION -->
+<div class="section" data-section="drafts">
+<div class="section-header">
+<div class="section-title">Drafts</div>
+<div class="section-subtitle">Quotes and in-progress sales conversations</div>
+</div>
+<div class="kpi-row" id="kpis_drafts"></div>
+<div class="grid-2">
+<div class="card"><h3>Draft value by rep</h3><div class="chart-container"><canvas id="repChartD"></canvas></div></div>
+<div class="card"><h3>Monthly draft trend</h3><div class="chart-container"><canvas id="monthChartD"></canvas></div></div>
+</div>
+<div class="card" style="margin-bottom:16px"><h3>Rep summary</h3><div class="table-scroll" id="t1d"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Drafts by rep × sales type</h3><div class="table-scroll" id="t2"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Drafts by rep × status</h3><div class="table-scroll" id="t5"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Vendor × rep</h3><div class="table-scroll-tall" id="t4"></div></div>
+<div class="card" style="margin-bottom:16px"><h3>Top 25 drafted products by units</h3><div class="table-scroll-tall" id="t8d"></div></div>
+</div>
+
 </div>
 <div class="footer">SHOCK SURPLUS · INTERNAL SALES DASHBOARD</div>
 </div>
@@ -140,7 +180,11 @@ tr:hover td{background:var(--bg3)}
 </div>
 <script>
 Chart.defaults.color='#999';Chart.defaults.borderColor='#2a2a2a';Chart.defaults.font.family="'Inter',-apple-system,sans-serif";Chart.defaults.font.size=11;
-let allOrders=[],allDrafts=[],filters={rep:new Set(),month:new Set()},repChart=null,monthChart=null;
+let allOrders=[],allDrafts=[],filters={rep:new Set(),month:new Set()};
+let repChartO=null,monthChartO=null,repChartD=null,monthChartD=null;
+// Active tab: 'all' | 'orders' | 'drafts'. Persisted in sessionStorage so it
+// survives reloads within the same browser tab.
+let activeTab=sessionStorage.getItem('activeTab')||'all';
 // Session-level in-memory cache for current (incomplete) month to avoid
 // refetching when user reloads same range within the session.
 const sessionCache=new Map();
@@ -354,30 +398,132 @@ function buildFilters(){
 function bfg(l,k,vs){let h='<div class="filter-group"><div class="filter-label">'+l+'</div><div class="filter-pills"><div class="pill active" data-key="'+k+'" data-val="__ALL__">All</div>';vs.forEach(v=>{h+='<div class="pill" data-key="'+k+'" data-val="'+v+'">'+v+'</div>'});return h+'</div></div>'}
 function af(d){return d.filter(o=>{if(filters.rep.size&&!filters.rep.has(o.rep))return false;if(filters.month.size&&!filters.month.has(MN[new Date(o.created_at).getMonth()]))return false;return true})}
 function uq(d){const s=new Set();return d.filter(o=>{const k=o.id+'_'+o.rep;if(s.has(k))return false;s.add(k);return true})}
-function render(){const o=af(allOrders),d=af(allDrafts),uo=uq(o),ud=uq(d);rKPI(uo,ud);rRC(uo);rMC(uo);rT1(uo);rT2(ud);rT3(uo);rT4(d);rT5(ud);rT6(uo);rT8(o)}
-function rKPI(o,d){const rev=o.reduce((s,x)=>s+x.subtotal,0),cnt=o.length,aov=cnt?rev/cnt:0,dc=d.length,od=d.filter(x=>x.status==='open').length;document.getElementById('kpis').innerHTML=[{l:'Revenue',v:fmtD(rev)},{l:'Orders',v:cnt.toLocaleString()},{l:'AOV',v:fmtD(aov)},{l:'Drafts sent',v:dc.toLocaleString()},{l:'Open drafts',v:od.toLocaleString()}].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('')}
+// Render dispatches to orders-scoped and drafts-scoped functions.
+// 'o' and 'd' are filtered line-item arrays; 'uo' and 'ud' are deduped to
+// one row per (order_id + rep) so per-order metrics count correctly.
+function render(){
+  const o=af(allOrders),d=af(allDrafts),uo=uq(o),ud=uq(d);
+  // Orders section
+  rKPI_orders(uo);
+  rRC_orders(uo);
+  rMC_orders(uo);
+  rT1(uo);
+  rT3(uo);
+  rT6(uo);
+  rT4_orders(o);
+  rT8(o);
+  // Drafts section
+  rKPI_drafts(ud);
+  rRC_drafts(ud);
+  rMC_drafts(ud);
+  rT1_drafts(ud);
+  rT2(ud);
+  rT5(ud);
+  rT4(d);
+  rT8_drafts(d);
+}
+
+function rKPI_orders(o){
+  const rev=o.reduce((s,x)=>s+x.subtotal,0);
+  const cnt=o.length;
+  const aov=cnt?rev/cnt:0;
+  // Top rep for context
+  const byRep={};o.forEach(x=>{byRep[x.rep]=(byRep[x.rep]||0)+x.subtotal});
+  const topRep=Object.entries(byRep).sort((a,b)=>b[1]-a[1])[0];
+  const topRepLabel=topRep?topRep[0]:'—';
+  document.getElementById('kpis_orders').innerHTML=[
+    {l:'Revenue',v:fmtD(rev)},
+    {l:'Orders',v:cnt.toLocaleString()},
+    {l:'AOV',v:fmtD(aov)},
+    {l:'Top rep',v:topRepLabel}
+  ].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+}
+
+function rKPI_drafts(d){
+  const val=d.reduce((s,x)=>s+x.subtotal,0);
+  const cnt=d.length;
+  const open=d.filter(x=>x.status==='open').length;
+  const conv=d.filter(x=>x.converted).length;
+  const convPct=cnt?Math.round(conv/cnt*100):0;
+  const avgVal=cnt?val/cnt:0;
+  document.getElementById('kpis_drafts').innerHTML=[
+    {l:'Draft value',v:fmtD(val)},
+    {l:'Total drafts',v:cnt.toLocaleString()},
+    {l:'Open',v:open.toLocaleString()},
+    {l:'Avg value',v:fmtD(avgVal)},
+    {l:'Conversion',v:convPct+'%'}
+  ].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+}
+
 const cc=['#e85d24','#ff7a3d','#30d5c8','#0a84ff','#bf5af2','#ffd60a','#34c759','#ff453a','#ff9f0a','#5e5ce6'];
-function rRC(o){const rt={};o.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);if(repChart)repChart.destroy();repChart=new Chart(document.getElementById('repChart'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}})}
-function rMC(o){const mt={};o.forEach(x=>{const d=new Date(x.created_at);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');const label=MN[d.getMonth()].slice(0,3)+' '+d.getFullYear();if(!mt[k])mt[k]={label,val:0};mt[k].val+=x.subtotal});const s=Object.entries(mt).sort((a,b)=>a[0].localeCompare(b[0]));if(monthChart)monthChart.destroy();monthChart=new Chart(document.getElementById('monthChart'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#e85d24',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}})}
+
+function rRC_orders(o){
+  const rt={};o.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});
+  const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);
+  if(repChartO)repChartO.destroy();
+  repChartO=new Chart(document.getElementById('repChartO'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}});
+}
+
+function rRC_drafts(d){
+  const rt={};d.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});
+  const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);
+  if(repChartD)repChartD.destroy();
+  repChartD=new Chart(document.getElementById('repChartD'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}});
+}
+
+function rMC_orders(o){
+  const mt={};o.forEach(x=>{const d=new Date(x.created_at);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');const label=MN[d.getMonth()].slice(0,3)+' '+d.getFullYear();if(!mt[k])mt[k]={label,val:0};mt[k].val+=x.subtotal});
+  const s=Object.entries(mt).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(monthChartO)monthChartO.destroy();
+  monthChartO=new Chart(document.getElementById('monthChartO'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#e85d24',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}});
+}
+
+function rMC_drafts(d){
+  const mt={};d.forEach(x=>{const dt=new Date(x.created_at);const k=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');const label=MN[dt.getMonth()].slice(0,3)+' '+dt.getFullYear();if(!mt[k])mt[k]={label,val:0};mt[k].val+=x.subtotal});
+  const s=Object.entries(mt).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(monthChartD)monthChartD.destroy();
+  monthChartD=new Chart(document.getElementById('monthChartD'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#30d5c8',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}});
+}
+
 function rT1(o){const reps={};o.forEach(x=>{if(!reps[x.rep])reps[x.rep]={rev:0,cnt:0};reps[x.rep].rev+=x.subtotal;reps[x.rep].cnt++});const s=Object.entries(reps).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Rep</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th></tr></thead><tbody>';s.forEach(([r,d])=>{h+='<tr><td>'+r+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td></tr></tbody></table>';document.getElementById('t1').innerHTML=h}
+
+// T1 drafts: rep summary with value, count, avg value, conversion %.
+function rT1_drafts(d){
+  const reps={};
+  d.forEach(x=>{
+    if(!reps[x.rep])reps[x.rep]={val:0,cnt:0,conv:0};
+    reps[x.rep].val+=x.subtotal;
+    reps[x.rep].cnt++;
+    if(x.converted)reps[x.rep].conv++;
+  });
+  const s=Object.entries(reps).sort((a,b)=>b[1].val-a[1].val);
+  const tv=s.reduce((a,[,v])=>a+v.val,0),tc=s.reduce((a,[,v])=>a+v.cnt,0),tconv=s.reduce((a,[,v])=>a+v.conv,0);
+  let h='<table><thead><tr><th>Rep</th><th class="num">Draft value</th><th class="num">Drafts</th><th class="num">Avg value</th><th class="num">Converted</th><th class="num">Conv %</th></tr></thead><tbody>';
+  s.forEach(([r,v])=>{
+    const cp=v.cnt?Math.round(v.conv/v.cnt*100):0;
+    h+='<tr><td>'+r+'</td><td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td><td class="num">'+fmtD(v.cnt?v.val/v.cnt:0)+'</td><td class="num">'+v.conv+'</td><td class="num">'+cp+'%</td></tr>';
+  });
+  const tcp=tc?Math.round(tconv/tc*100):0;
+  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tv)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tv/tc:0)+'</td><td class="num">'+tconv+'</td><td class="num">'+tcp+'%</td></tr></tbody></table>';
+  document.getElementById('t1d').innerHTML=h;
+}
+
 function rT2(d){const types=new Set(),reps={};d.forEach(x=>{types.add(x.sales_type);if(!reps[x.rep])reps[x.rep]={};if(!reps[x.rep][x.sales_type])reps[x.rep][x.sales_type]={val:0,cnt:0};reps[x.rep][x.sales_type].val+=x.subtotal;reps[x.rep][x.sales_type].cnt++});const st=[...types].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';st.forEach(t=>{h+='<th class="num">'+t+' Value</th><th class="num">'+t+' Count</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const gt={};sr.forEach(rep=>{h+='<tr><td>'+rep+'</td>';let rt=0;st.forEach(t=>{const v=(reps[rep]||{})[t]||{val:0,cnt:0};h+='<td class="num">'+(v.val?fmtD(v.val):'')+'</td><td class="num">'+(v.cnt||'')+'</td>';rt+=v.val;if(!gt[t])gt[t]={val:0,cnt:0};gt[t].val+=v.val;gt[t].cnt+=v.cnt});h+='<td class="num">'+fmtD(rt)+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;st.forEach(t=>{const v=gt[t]||{val:0,cnt:0};h+='<td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td>';g+=v.val});h+='<td class="num">'+fmtD(g)+'</td></tr></tbody></table>';document.getElementById('t2').innerHTML=h}
 function rT3(o){const sources=new Set(),reps={};o.forEach(x=>{const src=x.source==='shopify_draft_order'?'Draft Order':x.source==='web'?'Web':'Other';sources.add(src);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][src]=(reps[x.rep][src]||0)+1});const ss=[...sources].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+='<tr><td>'+rep+'</td>';let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v;tot[s]=(tot[s]||0)+v});h+='<td class="num">'+rt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+='<td class="num">'+(tot[s]||0)+'</td>';g+=tot[s]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t3').innerHTML=h}
+// T4 drafts (existing): Vendor × rep from draft data
 function rT4(d){const vendors={},rs=new Set();d.forEach(x=>{const vnorm=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');if(vnorm==='redo')return;const label=x.vendor&&x.vendor.trim()?x.vendor:'Custom';rs.add(x.rep);if(!vendors[label])vendors[label]={};vendors[label][x.rep]=(vendors[label][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4').innerHTML=h}
+// T4 orders: same matrix from orders data, rendered into #t4o
+function rT4_orders(o){const vendors={},rs=new Set();o.forEach(x=>{const vnorm=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');if(vnorm==='redo')return;const label=x.vendor&&x.vendor.trim()?x.vendor:'Custom';rs.add(x.rep);if(!vendors[label])vendors[label]={};vendors[label][x.rep]=(vendors[label][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4o').innerHTML=h}
 function rT5(d){const statuses=new Set(),reps={};d.forEach(x=>{statuses.add(x.status);if(!reps[x.rep])reps[x.rep]={};reps[x.rep][x.status]=(reps[x.rep][x.status]||0)+1});const ss=[...statuses].sort(),sr=Object.keys(reps).sort();let h='<table><thead><tr><th>Rep</th>';ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const tot={};sr.forEach(rep=>{h+='<tr><td>'+rep+'</td>';let rt=0;ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v;tot[s]=(tot[s]||0)+v});h+='<td class="num">'+rt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;ss.forEach(s=>{h+='<td class="num">'+(tot[s]||0)+'</td>';g+=tot[s]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t5').innerHTML=h}
 function rT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]={rev:0,cnt:0};ch[x.sales_type].rev+=x.subtotal;ch[x.sales_type].cnt++});const s=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';s.forEach(([c,d])=>{h+='<tr><td>'+c+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td><td class="num">'+pct(tr?d.rev/tr:0)+'</td></tr>'});h+='<tr class="grand-total"><td>Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td><td class="num">100%</td></tr></tbody></table>';document.getElementById('t6').innerHTML=h}
 
-// T8: Top 25 products by units sold.
-// Aggregates by SKU (to group variants of the same product line) but only
-// displays Product title, Vendor, and Units — no SKU/revenue/type columns.
-// Sorted descending by units. Product column has space to show full titles
-// without truncation so the table doesn't need to scroll.
-// Re:do vendor is excluded (warranty/replacement program, not a real sale).
-function rT8(lines){
+// Top 25 products by units sold. Aggregates by SKU to group variants of the
+// same product line. Displays Product title, Vendor, Units (no SKU/revenue).
+// Product column wraps to avoid horizontal scroll. Re:do vendor excluded.
+function renderTopProducts(lines,targetId){
   const bySku={};
   lines.forEach(x=>{
     if(!x.sku)return;
-    // Normalize vendor: lowercase, strip punctuation/whitespace.
-    // Catches "Redo", "Re:Do", "RE:DO", "re-do", etc.
     const v=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');
     if(v==='redo')return;
     if(!bySku[x.sku])bySku[x.sku]={title:x.item_title,vendor:x.vendor,units:0};
@@ -389,8 +535,26 @@ function rT8(lines){
     h+='<tr><td style="white-space:normal;line-height:1.35">'+(d.title||'')+'</td><td>'+(d.vendor||'')+'</td><td class="num">'+d.units+'</td></tr>';
   });
   h+='</tbody></table>';
-  document.getElementById('t8').innerHTML=h;
+  document.getElementById(targetId).innerHTML=h;
 }
+function rT8(lines){renderTopProducts(lines,'t8')}
+function rT8_drafts(lines){renderTopProducts(lines,'t8d')}
+
+// Tab switching. Toggles .hidden on each section based on active tab.
+// Charts inside hidden sections aren't removed — Chart.js just renders
+// into a display:none canvas, which is fine (they redraw on tab change).
+function setTab(tab){
+  activeTab=tab;
+  sessionStorage.setItem('activeTab',tab);
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    b.classList.toggle('active',b.dataset.tab===tab);
+  });
+  document.querySelectorAll('.section[data-section]').forEach(s=>{
+    const which=s.dataset.section;
+    s.classList.toggle('hidden',tab!=='all'&&tab!==which);
+  });
+}
+
 function promptLogin(){
   document.getElementById('loginModal').classList.add('open');
   setTimeout(()=>document.getElementById('loginPwd').focus(),50);
@@ -421,6 +585,9 @@ async function boot(){
   const n=new Date();
   document.getElementById('dateFrom').value=new Date(n.getFullYear(),n.getMonth(),1).toISOString().split('T')[0];
   document.getElementById('dateTo').value=n.toISOString().split('T')[0];
+
+  // Apply persisted tab state
+  setTab(activeTab);
 
   // Check if dashboard auth is required
   try{
