@@ -2,8 +2,7 @@ import { put, head } from '@vercel/blob';
 import { getShopifyToken } from './_shopify.js';
 import { requireDashAuth } from './_auth.js';
 
-const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
-const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
+const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','jeff','joe','nick'];
 
 function classifySalesType(tags) {
   const t = (tags || '').toLowerCase();
@@ -104,10 +103,9 @@ function processDrafts(drafts) {
     const tagList = tags.split(', ').map(t => t.trim().toLowerCase());
     const reps = [];
     for (const tag of tagList) {
-      for (const prefix of PREFIXES) {
-        if (tag.startsWith(prefix)) {
-          const name = tag.slice(prefix.length);
-          if (name && !reps.includes(name) && VALID_REPS.includes(name.toLowerCase())) reps.push(name);
+      for (const rep of VALID_REPS) {
+        if ((tag === rep || tag.endsWith('-' + rep)) && !reps.includes(rep)) {
+          reps.push(rep);
         }
       }
     }

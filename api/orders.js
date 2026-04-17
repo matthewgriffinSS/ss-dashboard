@@ -2,8 +2,7 @@ import { put, head } from '@vercel/blob';
 import { getShopifyToken } from './_shopify.js';
 import { requireDashAuth } from './_auth.js';
 
-const PREFIXES = ['phone-','phones-','chat-','chats-','email-','richpanel-','richpannel-','slack-','wholesale-','rebuild-','save-','saved-','walkin-','walk-in-','social-','facebook-','instagram-','f&f-'];
-const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','joe','nick'];
+const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','jeff','joe','nick'];
 
 function classifySalesType(tags, source) {
   const t = (tags || '').toLowerCase();
@@ -34,11 +33,6 @@ function idFromGid(gid) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-// Lean orders query — no product detail lookups.
-// Cost budget: 50 orders/page × (1 + 20 line items × 1) ≈ 1050pt.
-// Shopify's cap is 1000; a single "scalar" (sku, quantity, price) on a line
-// item contributes 0pt, so actual cost is closer to 50 × (1 + 20 × 1) = 1050.
-// Stay safe by using first: 40.
 const ORDERS_QUERY = `
   query OrdersByRange($query: String!, $cursor: String) {
     orders(first: 40, after: $cursor, query: $query, sortKey: CREATED_AT) {
@@ -71,27 +65,42 @@ const ORDERS_QUERY = `
 `;
 
 function normalizeGqlOrder(node) {
+  const orderSubtotal = parseFloat(
+    node.currentSubtotalPriceSet?.shopMoney?.amount || 0
+  );
+
   const lineItems = (node.lineItems?.edges || []).map(e => {
     const li = e.node;
     const price = parseFloat(li.originalUnitPriceSet?.shopMoney?.amount || 0);
     const qty = li.quantity || 0;
-    const gross = price * qty;
-    const discounted = parseFloat(li.discountedTotalSet?.shopMoney?.amount || gross);
+    const discounted = parseFloat(li.discountedTotalSet?.shopMoney?.amount || price * qty);
     return {
       title: li.title || '',
       vendor: li.vendor || '',
       sku: li.sku || '',
       price,
       quantity: qty,
-      line_revenue: discounted // post-line-discount actual revenue
+      discounted,
+      line_revenue: discounted
     };
   });
+
+  // Proportionally distribute currentSubtotalPriceSet (post-refund, post-discount)
+  // across line items based on each line's share of the discounted total
+  const totalDiscounted = lineItems.reduce((sum, li) => sum + li.discounted, 0);
+  if (totalDiscounted > 0) {
+    for (const li of lineItems) {
+      li.line_revenue = (li.discounted / totalDiscounted) * orderSubtotal;
+    }
+  }
+
+  for (const li of lineItems) delete li.discounted;
 
   return {
     id: idFromGid(node.id),
     name: node.name || '',
     created_at: node.createdAt,
-    current_subtotal_price: node.currentSubtotalPriceSet?.shopMoney?.amount || '0',
+    current_subtotal_price: String(orderSubtotal),
     financial_status: (node.displayFinancialStatus || '').toLowerCase(),
     source_name: node.sourceName || '',
     tags: tagsToString(node.tags),
@@ -99,7 +108,7 @@ function normalizeGqlOrder(node) {
   };
 }
 
-function nextMonthStart(year, month /* 1-12 */) {
+function nextMonthStart(year, month) {
   if (month === 12) return `${year + 1}-01-01`;
   return `${year}-${String(month + 1).padStart(2, '0')}-01`;
 }
@@ -171,10 +180,9 @@ function processOrders(orders) {
     const tagList = tags.split(', ').map(t => t.trim().toLowerCase());
     const reps = [];
     for (const tag of tagList) {
-      for (const prefix of PREFIXES) {
-        if (tag.startsWith(prefix)) {
-          const name = tag.slice(prefix.length);
-          if (name && !reps.includes(name) && VALID_REPS.includes(name.toLowerCase())) reps.push(name);
+      for (const rep of VALID_REPS) {
+        if ((tag === rep || tag.endsWith('-' + rep)) && !reps.includes(rep)) {
+          reps.push(rep);
         }
       }
     }
