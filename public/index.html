@@ -99,6 +99,9 @@ tr:hover td{background:var(--bg3)}
 <button class="date-btn" onclick="sp('thisMonth',this)">This month</button>
 <button class="date-btn" onclick="sp('lastMonth',this)">Last month</button>
 <button class="date-btn" onclick="sp('last60',this)">Last 60 days</button>
+<button class="date-btn" onclick="sp('thisYear',this)">This year</button>
+<button class="date-btn" onclick="sp('lastYear',this)">Last year</button>
+<button class="date-btn" onclick="sp('allTime',this)">All time</button>
 <span class="sep">|</span>
 <input type="date" id="dateFrom" class="date-input">
 <span class="sep">to</span>
@@ -234,6 +237,9 @@ function sp(p,el){
   else if(p==='thisMonth'){f=new Date(y,m,1);t=now}
   else if(p==='lastMonth'){f=new Date(y,m-1,1);t=new Date(y,m,0)}
   else if(p==='last60'){f=new Date(now);f.setDate(now.getDate()-60);t=now}
+  else if(p==='thisYear'){f=new Date(y,0,1);t=now}
+  else if(p==='lastYear'){f=new Date(y-1,0,1);t=new Date(y-1,11,31)}
+  else if(p==='allTime'){f=new Date(2017,11,13);t=now}
   document.getElementById('dateFrom').value=f.toISOString().split('T')[0];
   document.getElementById('dateTo').value=t.toISOString().split('T')[0];
   document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('active'));
