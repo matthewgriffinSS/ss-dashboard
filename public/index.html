@@ -360,10 +360,15 @@ function rT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]=
 // displays Product title, Vendor, and Units — no SKU/revenue/type columns.
 // Sorted descending by units. Product column has space to show full titles
 // without truncation so the table doesn't need to scroll.
+// Re:do vendor is excluded (warranty/replacement program, not a real sale).
 function rT8(lines){
   const bySku={};
   lines.forEach(x=>{
     if(!x.sku)return;
+    // Normalize vendor: lowercase, strip punctuation/whitespace.
+    // Catches "Redo", "Re:Do", "RE:DO", "re-do", etc.
+    const v=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');
+    if(v==='redo')return;
     if(!bySku[x.sku])bySku[x.sku]={title:x.item_title,vendor:x.vendor,units:0};
     bySku[x.sku].units+=(x.item_qty||0);
   });
