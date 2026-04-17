@@ -1,17 +1,20 @@
 # Shock Surplus Dashboard
 
+Internal sales reporting dashboard. Pulls orders and draft orders directly from Shopify via GraphQL, caches completed months, and renders live charts and tables for rep performance.
+
 ## Files
+
 ```
 ss-dashboard/
 ├── api/
 │   ├── _shopify.js         (shared Shopify auth + token cache)
 │   ├── _auth.js            (admin + dashboard auth helpers)
-│   ├── orders.js           (orders + product enrichment, per-month, cached)
-│   ├── draft-orders.js     (draft orders, per-month, cached)
-│   ├── clear-cache.js      (admin: list/clear cached months + product catalog)
+│   ├── orders.js           (Shopify orders endpoint, per-month, cached)
+│   ├── draft-orders.js     (Shopify draft orders endpoint, per-month, cached)
+│   ├── clear-cache.js      (admin: list/clear cached months)
 │   └── login.js            (dashboard password check)
 ├── public/
-│   └── index.html          (frontend)
+│   └── index.html          (frontend — single file, loads Bebas Neue / Inter + Chart.js from CDNs)
 ├── package.json
 └── vercel.json
 ```
@@ -31,7 +34,7 @@ ss-dashboard/
 | `SHOPIFY_CLIENT_SECRET` | yes      | Shopify app client secret                                            |
 | `SHOPIFY_STORE`         | yes      | Store handle, e.g. `shock-surplus`                                   |
 | `DASHBOARD_PASSWORD`    | optional | If set, users must enter this password to view the dashboard         |
-| `ADMIN_KEY`             | yes for cache UI | Separate key required to list or clear cached months         |
+| `ADMIN_KEY`             | yes (for cache UI) | Separate key required to list or clear cached months       |
 | `BLOB_READ_WRITE_TOKEN` | yes      | Vercel Blob token (auto-provisioned when you add Blob storage)       |
 
 ## Shopify scopes required
@@ -42,59 +45,60 @@ ss-dashboard/
 
 ## How the data layer works
 
-**Two-phase fetching for orders.** Each month, the orders endpoint runs two queries:
-
-1. **Orders query** — pulls order records for the month via GraphQL with cursor pagination. 25 orders per page × 20 line items per page stays under Shopify's 1,000-point query-cost cap.
-2. **Product catalog query** — collects all unique product IDs seen in the orders, looks them up in a shared catalog blob, and batch-fetches any missing products (80 per batch). The catalog holds product type, tags, and collection memberships — everything needed for vehicle-fit reports.
-
-The product catalog is cached separately in `products-catalog.json` with a 24-hour TTL. Since products change rarely, this dramatically reduces API calls.
+Each month is fetched via Shopify GraphQL with cursor pagination. Orders page at 40 per page × 20 line items — comfortably under Shopify's 1,000-point query-cost cap. Drafts page at 50 per page × 20 line items.
 
 **Three cache tiers:**
 
-- **Blob cache (persistent, per month)** — completed months are stored in Vercel Blob. Next load is instant.
-- **Product catalog blob (24h TTL)** — shared across all months, refreshed daily.
-- **Session cache (in-browser, per tab)** — the current month is cached in memory within a session so repeated loads don't refetch.
+- **Vercel Blob (persistent, per month)** — completed months are cached as `orders-YYYY-MM.json` and `drafts-YYYY-MM.json`. Next load is instant, no Shopify calls.
+- **In-browser session cache** — the current month is cached in memory within a browser tab so repeated "Load data" clicks don't refetch.
+- **Shopify token cache** — the OAuth access token is held in module-level state for 50 minutes across warm Vercel invocations.
 
 ## Reports available
 
-- **KPIs:** revenue, order count, AOV, drafts sent, open drafts
-- **Rep summary** — revenue, order count, AOV per rep
+- **KPIs:** revenue, orders, AOV, drafts sent, open drafts
+- **Revenue by rep** (chart)
+- **Monthly trend** (chart)
+- **Rep summary** — revenue, order count, AOV
 - **Draft sales by rep × sales type**
 - **Order count by rep × source**
 - **Vendor × rep**
 - **Rep × draft status**
 - **Channel performance**
-- **Product type × rep** — revenue matrix showing what each rep sells
-- **Top 25 SKUs by revenue**
-- **Top 10 vehicle fits** — collection-based fitment analytics (e.g. "2015-2020 Ford F150")
-- **Vehicle attribute breakdown** — make / year / lift-amount splits by revenue and units
+- **Top 25 products by units sold** (Re:do vendor excluded — warranty/replacement program)
 
-All revenue uses actual post-discount line revenue. Tax and shipping are excluded.
+All revenue uses actual post-discount `line_revenue`. Tax and shipping are excluded — these are true sales subtotals.
 
 ## Cache management
 
 Click the gear icon (⚙) in the header. You'll be prompted for `ADMIN_KEY` on first use (stored in sessionStorage until the tab closes).
 
-The modal lists every cached blob — monthly order/draft files plus `products-catalog.json`. Clear any of them individually or clear everything.
+The modal lists every cached month with size + cache timestamp. Clear any single month or clear all.
 
-**When to clear:**
-- **A month's cache** — if tags change retroactively on older orders (a rep tag was corrected), clear that month to force a refetch.
-- **Product catalog** — if product types, tags, or collections change and you want those changes reflected immediately. Otherwise the catalog auto-refreshes every 24 hours.
+**When to clear:** if tags change retroactively on older orders (a rep tag was corrected), clear that month to force a fresh fetch on next load. Otherwise cached data is authoritative until you say otherwise.
 
 ## Security notes
 
 - `DASHBOARD_PASSWORD` protects the data endpoints themselves — hitting `/api/orders` directly still requires auth.
 - `ADMIN_KEY` is strictly required for the cache endpoint. No fallback.
 - Both keys are held in `sessionStorage`, so closing the tab logs you out.
-- Env vars are never exposed to the browser.
+- Vercel env vars are never exposed to the browser.
 
-## Performance notes
+## Performance
 
 - Orders and drafts fetch in parallel per month.
-- Shopify access token is cached across warm invocations for 50 minutes.
+- Shopify token cached across warm invocations for 50 min (with in-flight deduplication so cold-start races don't mint duplicate tokens).
 - Adaptive throttling watches Shopify's `extensions.cost.throttleStatus` and backs off when the rate-limit bucket runs low.
-- 8-second request timeout fails fast (before Vercel's 10-second Hobby plan timeout) with a clear error.
-- Completed months are served from Vercel Blob — instant, no Shopify calls.
+- 8-second request timeout fails fast (before Vercel's 10-second Hobby plan timeout) with a clear error instead of a generic 504.
+- Completed months served from Vercel Blob — instant, zero Shopify calls.
+- Date-range filter uses `created_at:<next-month-start` (exclusive upper bound) so the last day of each month is fully included.
+
+## External dependencies (with fallbacks)
+
+The frontend pulls three CDN resources:
+
+- **Chart.js** from cdnjs — required for charts (no graceful fallback; dashboard would break if blocked)
+- **Google Fonts** (Bebas Neue + Inter) — falls back to system sans-serif if blocked
+- **Shock Surplus logo** from Shopify CDN — falls back to a Bebas Neue text treatment if blocked
 
 ## Sharing
 
