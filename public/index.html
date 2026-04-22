@@ -212,7 +212,11 @@ async function fetchMonth(endpoint,mo,progressCb){
   progressCb(mo);
   const r=await fetch('/api/'+endpoint+'?month='+mo,{headers:authHeaders()});
   if(r.status===401){promptLogin();throw new Error('Unauthorized')}
-  if(!r.ok)throw new Error(r.status+' '+r.statusText);
+  if(!r.ok){
+    let msg=r.status+' '+r.statusText;
+    try{const j=await r.json();if(j&&j.error)msg=j.error}catch{}
+    throw new Error(msg);
+ }
   const ct=r.headers.get('content-type')||'';
   if(!ct.includes('json'))throw new Error('Non-JSON response');
   const d=await r.json();
