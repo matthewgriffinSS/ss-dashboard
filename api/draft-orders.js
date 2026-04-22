@@ -33,7 +33,7 @@ function idFromGid(gid) {
 
 const DRAFTS_QUERY = `
   query DraftsByRange($query: String!, $cursor: String) {
-    draftOrders(first: 50, after: $cursor, query: $query, sortKey: UPDATED_AT) {
+    draftOrders(first: 50, after: $cursor, query: $query, sortKey: CREATED_AT) {
       pageInfo { hasNextPage endCursor }
       edges {
         node {
