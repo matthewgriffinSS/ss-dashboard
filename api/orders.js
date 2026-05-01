@@ -2,6 +2,10 @@ import { put, head } from '@vercel/blob';
 import { getShopifyToken } from './_shopify.js';
 import { requireDashAuth } from './_auth.js';
 
+// Allow up to 60s of execution time. Heavy months can require multiple
+// paginated GraphQL calls and will exceed the default 10s.
+export const maxDuration = 60;
+
 const VALID_REPS = ['boggs','bowman','bryan','griffin','hector','jeff','joe','nick'];
 
 function classifySalesType(tags, source) {
@@ -124,8 +128,10 @@ async function fetchOrdersGraphQL(token, store, month, year, monthNum) {
   let lastCost = null;
 
   while (true) {
+    // Per-request timeout. Generous enough for slow Shopify pages but well
+    // under maxDuration so we still fail fast on a true network hang.
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const timer = setTimeout(() => ctrl.abort(), 30000);
     let res;
     try {
       res = await fetch(url, {
