@@ -232,9 +232,13 @@ export default async function handler(req, res) {
   }
 
   const [y, m] = month.split('-').map(Number);
+  // Cache only months that are at least 2 months old. Current and previous
+  // month always fetch live so retroactive tag fixes show up without
+  // requiring a manual cache clear.
   const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const isComplete = month < currentMonth;
+  const cutoff = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const cutoffMonth = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+  const isComplete = month < cutoffMonth;
   const blobKey = `orders-${month}.json`;
 
   if (isComplete) {
