@@ -257,9 +257,14 @@ function sp(p,el){
   loadAll();
 }
 
+// Mirrors API logic: a month is eligible for blob cache only when it's
+// at least 2 months old. Current + previous month always go live so
+// retroactive tag fixes show up without a manual cache clear.
 function isCompleteMonth(mo){
-  const now=new Date();const current=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  return mo<current;
+  const now=new Date();
+  const cutoff=new Date(now.getFullYear(),now.getMonth()-1,1);
+  const cutoffMonth=cutoff.getFullYear()+'-'+String(cutoff.getMonth()+1).padStart(2,'0');
+  return mo<cutoffMonth;
 }
 
 function openCacheModal(){
