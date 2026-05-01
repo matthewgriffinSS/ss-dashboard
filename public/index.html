@@ -387,4 +387,424 @@ async function loadAll(){
   const errBanner=document.getElementById('errBanner');
   if(errors.length){
     errBanner.style.display='block';
-    errBanner.innerHTML='<strong>⚠ Partial data:</strong> '+errors.length+' month(s) failed
+    errBanner.innerHTML='<strong>⚠ Partial data:</strong> '+errors.length+' month(s) failed to load. '+errors.map(e=>e).join(' · ');
+  }else{
+    errBanner.style.display='none';
+  }
+  document.getElementById('cacheInfo').textContent=(cached?cached+' cached, ':'')+fetched+' live';
+  document.getElementById('loadingArea').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('goBtn').disabled=false;
+  document.getElementById('status').textContent=dMin+' to '+dMax+' | '+allOrders.length+' order lines | '+allDrafts.length+' draft lines | '+new Date().toLocaleTimeString();
+
+  filters={rep:new Set(),month:new Set()};buildFilters();render();
+}
+
+function buildFilters(){
+  const reps=new Set(),months=new Set();
+  [...allOrders,...allDrafts].forEach(o=>{if(o.rep)reps.add(o.rep);months.add(MN[new Date(o.created_at).getMonth()])});
+  let h='';h+=bfg('Rep','rep',[...reps].sort());h+=bfg('Month','month',[...months].sort((a,b)=>MO[a]-MO[b]));
+  document.getElementById('filters').innerHTML=h;
+  document.querySelectorAll('.pill').forEach(p=>{p.addEventListener('click',()=>{
+    const k=p.dataset.key,v=p.dataset.val;
+    if(v==='__ALL__'){filters[k].clear();document.querySelectorAll('.pill[data-key="'+k+'"]').forEach(x=>x.classList.remove('active'));p.classList.add('active')}
+    else{document.querySelector('.pill[data-key="'+k+'"][data-val="__ALL__"]').classList.remove('active');p.classList.toggle('active');if(p.classList.contains('active'))filters[k].add(v);else filters[k].delete(v);if(filters[k].size===0)document.querySelector('.pill[data-key="'+k+'"][data-val="__ALL__"]').classList.add('active')}
+    render()})});
+}
+function bfg(l,k,vs){let h='<div class="filter-group"><div class="filter-label">'+l+'</div><div class="filter-pills"><div class="pill active" data-key="'+k+'" data-val="__ALL__">All</div>';vs.forEach(v=>{h+='<div class="pill" data-key="'+k+'" data-val="'+v+'">'+v+'</div>'});return h+'</div></div>'}
+function af(d){return d.filter(o=>{if(filters.rep.size&&!filters.rep.has(o.rep))return false;if(filters.month.size&&!filters.month.has(MN[new Date(o.created_at).getMonth()]))return false;return true})}
+
+// uq: dedupe to one row per (order_id, rep). Use for per-rep tag-attribution
+// views — each rep sees full credit for orders they're tagged on.
+function uq(d){const s=new Set();return d.filter(o=>{const k=o.id+'_'+o.rep;if(s.has(k))return false;s.add(k);return true})}
+
+// uqById: dedupe to one row per order regardless of rep count. Use for any
+// total/aggregate where shared-rep orders should count once (KPIs, channel
+// performance, monthly trend, grand-total rows).
+function uqById(d){const s=new Set();return d.filter(o=>{if(s.has(o.id))return false;s.add(o.id);return true})}
+
+// uqLines: keep only line items belonging to the first rep encountered per
+// order. Use for line-item rollups (top products, units sold) so a
+// shared-rep order doesn't multiply its quantities.
+function uqLines(d){
+  const firstRep={};
+  d.forEach(x=>{if(!firstRep[x.id])firstRep[x.id]=x.rep});
+  return d.filter(x=>firstRep[x.id]===x.rep);
+}
+
+// getRepPosition: returns 1-indexed position of repName among the rep tags
+// on this order/draft (1=first tagged rep, 2=second, etc.). 0 if not found.
+// Mirrors the rep-extraction logic in the API so positions stay consistent.
+function getRepPosition(tagsStr,repName){
+  if(!tagsStr)return 0;
+  const tagList=tagsStr.split(', ').map(t=>t.trim().toLowerCase());
+  const seen=[];
+  for(const tag of tagList){
+    for(const rep of VALID_REPS_LC){
+      if((tag===rep||tag.endsWith('-'+rep))&&!seen.includes(rep))seen.push(rep);
+    }
+  }
+  return seen.indexOf((repName||'').toLowerCase())+1;
+}
+
+// Render dispatches to orders-scoped and drafts-scoped functions.
+//   uo / ud      = one row per (order, rep)  → per-rep tag attribution
+//   uoOrd/udOrd  = one row per order         → totals, KPIs, channel performance
+//   oLines/dLines = one rep's line items per order → unit-count rollups
+function render(){
+  const o=af(allOrders),d=af(allDrafts);
+  const uo=uq(o),ud=uq(d);
+  const uoOrd=uqById(uo),udOrd=uqById(ud);
+  const oLines=uqLines(o),dLines=uqLines(d);
+  // Orders section
+  rKPI_orders(uoOrd,uo);
+  rRC_orders(uo);
+  rMC_orders(uoOrd);
+  rT1(uo,uoOrd);
+  rT3(uo,uoOrd);
+  rT6(uoOrd);
+  rT4_orders(o);
+  rT8(oLines);
+  rT9(uo);
+  // Drafts section
+  rKPI_drafts(udOrd);
+  rRC_drafts(ud);
+  rMC_drafts(udOrd);
+  rT1_drafts(ud,udOrd);
+  rT2(ud,udOrd);
+  rT5(ud,udOrd);
+  rT4(d);
+  rT8_drafts(dLines);
+}
+
+// KPIs: totals from unique orders. Top-rep label uses per-rep tag attribution
+// (which rep was tagged on the most revenue, regardless of co-tagging).
+function rKPI_orders(uniq,allReps){
+  const rev=uniq.reduce((s,x)=>s+x.subtotal,0);
+  const cnt=uniq.length;
+  const aov=cnt?rev/cnt:0;
+  const byRep={};allReps.forEach(x=>{byRep[x.rep]=(byRep[x.rep]||0)+x.subtotal});
+  const topRep=Object.entries(byRep).sort((a,b)=>b[1]-a[1])[0];
+  const topRepLabel=topRep?topRep[0]:'—';
+  document.getElementById('kpis_orders').innerHTML=[
+    {l:'Revenue',v:fmtD(rev)},
+    {l:'Orders',v:cnt.toLocaleString()},
+    {l:'AOV',v:fmtD(aov)},
+    {l:'Top rep',v:topRepLabel}
+  ].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+}
+
+function rKPI_drafts(d){
+  const val=d.reduce((s,x)=>s+x.subtotal,0);
+  const cnt=d.length;
+  const open=d.filter(x=>x.status==='open').length;
+  const conv=d.filter(x=>x.converted).length;
+  const convPct=cnt?Math.round(conv/cnt*100):0;
+  const avgVal=cnt?val/cnt:0;
+  document.getElementById('kpis_drafts').innerHTML=[
+    {l:'Draft value',v:fmtD(val)},
+    {l:'Total drafts',v:cnt.toLocaleString()},
+    {l:'Open',v:open.toLocaleString()},
+    {l:'Avg value',v:fmtD(avgVal)},
+    {l:'Conversion',v:convPct+'%'}
+  ].map(k=>'<div class="kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+}
+
+const cc=['#e85d24','#ff7a3d','#30d5c8','#0a84ff','#bf5af2','#ffd60a','#34c759','#ff453a','#ff9f0a','#5e5ce6'];
+
+function rRC_orders(o){
+  const rt={};o.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});
+  const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);
+  if(repChartO)repChartO.destroy();
+  repChartO=new Chart(document.getElementById('repChartO'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}});
+}
+
+function rRC_drafts(d){
+  const rt={};d.forEach(x=>{rt[x.rep]=(rt[x.rep]||0)+x.subtotal});
+  const s=Object.entries(rt).sort((a,b)=>b[1]-a[1]);
+  if(repChartD)repChartD.destroy();
+  repChartD=new Chart(document.getElementById('repChartD'),{type:'bar',data:{labels:s.map(([k])=>k),datasets:[{data:s.map(([,v])=>v),backgroundColor:s.map((_,i)=>cc[i%cc.length]),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}},y:{grid:{display:false}}}}});
+}
+
+// Monthly trend: each order counted once per month regardless of rep count.
+function rMC_orders(o){
+  const mt={};o.forEach(x=>{const d=new Date(x.created_at);const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');const label=MN[d.getMonth()].slice(0,3)+' '+d.getFullYear();if(!mt[k])mt[k]={label,val:0};mt[k].val+=x.subtotal});
+  const s=Object.entries(mt).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(monthChartO)monthChartO.destroy();
+  monthChartO=new Chart(document.getElementById('monthChartO'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#e85d24',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}});
+}
+
+function rMC_drafts(d){
+  const mt={};d.forEach(x=>{const dt=new Date(x.created_at);const k=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');const label=MN[dt.getMonth()].slice(0,3)+' '+dt.getFullYear();if(!mt[k])mt[k]={label,val:0};mt[k].val+=x.subtotal});
+  const s=Object.entries(mt).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(monthChartD)monthChartD.destroy();
+  monthChartD=new Chart(document.getElementById('monthChartD'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#30d5c8',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}});
+}
+
+// T1: per-rep rows show tag attribution; grand total uses unique orders.
+function rT1(o,uniq){
+  const reps={};o.forEach(x=>{if(!reps[x.rep])reps[x.rep]={rev:0,cnt:0};reps[x.rep].rev+=x.subtotal;reps[x.rep].cnt++});
+  const s=Object.entries(reps).sort((a,b)=>b[1].rev-a[1].rev);
+  const tr=uniq.reduce((a,x)=>a+x.subtotal,0),tc=uniq.length;
+  let h='<table><thead><tr><th>Rep</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th></tr></thead><tbody>';
+  s.forEach(([r,d])=>{h+='<tr><td>'+r+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td></tr>'});
+  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td></tr></tbody></table>';
+  document.getElementById('t1').innerHTML=h;
+}
+
+// T1 drafts: per-rep tag attribution, grand total deduped to unique drafts.
+function rT1_drafts(d,uniq){
+  const reps={};
+  d.forEach(x=>{
+    if(!reps[x.rep])reps[x.rep]={val:0,cnt:0,conv:0};
+    reps[x.rep].val+=x.subtotal;
+    reps[x.rep].cnt++;
+    if(x.converted)reps[x.rep].conv++;
+  });
+  const s=Object.entries(reps).sort((a,b)=>b[1].val-a[1].val);
+  const tv=uniq.reduce((a,x)=>a+x.subtotal,0);
+  const tc=uniq.length;
+  const tconv=uniq.filter(x=>x.converted).length;
+  let h='<table><thead><tr><th>Rep</th><th class="num">Draft value</th><th class="num">Drafts</th><th class="num">Avg value</th><th class="num">Converted</th><th class="num">Conv %</th></tr></thead><tbody>';
+  s.forEach(([r,v])=>{
+    const cp=v.cnt?Math.round(v.conv/v.cnt*100):0;
+    h+='<tr><td>'+r+'</td><td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td><td class="num">'+fmtD(v.cnt?v.val/v.cnt:0)+'</td><td class="num">'+v.conv+'</td><td class="num">'+cp+'%</td></tr>';
+  });
+  const tcp=tc?Math.round(tconv/tc*100):0;
+  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tv)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tv/tc:0)+'</td><td class="num">'+tconv+'</td><td class="num">'+tcp+'%</td></tr></tbody></table>';
+  document.getElementById('t1d').innerHTML=h;
+}
+
+// T2: per-rep rows tag attribution, column + grand totals use unique drafts.
+function rT2(d,uniq){
+  const types=new Set(),reps={};
+  d.forEach(x=>{
+    types.add(x.sales_type);
+    if(!reps[x.rep])reps[x.rep]={};
+    if(!reps[x.rep][x.sales_type])reps[x.rep][x.sales_type]={val:0,cnt:0};
+    reps[x.rep][x.sales_type].val+=x.subtotal;
+    reps[x.rep][x.sales_type].cnt++;
+  });
+  const colTot={};
+  uniq.forEach(x=>{
+    types.add(x.sales_type);
+    if(!colTot[x.sales_type])colTot[x.sales_type]={val:0,cnt:0};
+    colTot[x.sales_type].val+=x.subtotal;
+    colTot[x.sales_type].cnt++;
+  });
+  const st=[...types].sort(),sr=Object.keys(reps).sort();
+  let h='<table><thead><tr><th>Rep</th>';
+  st.forEach(t=>{h+='<th class="num">'+t+' Value</th><th class="num">'+t+' Count</th>'});
+  h+='<th class="num">Total</th></tr></thead><tbody>';
+  sr.forEach(rep=>{
+    h+='<tr><td>'+rep+'</td>';
+    let rt=0;
+    st.forEach(t=>{
+      const v=(reps[rep]||{})[t]||{val:0,cnt:0};
+      h+='<td class="num">'+(v.val?fmtD(v.val):'')+'</td><td class="num">'+(v.cnt||'')+'</td>';
+      rt+=v.val;
+    });
+    h+='<td class="num">'+fmtD(rt)+'</td></tr>';
+  });
+  h+='<tr class="grand-total"><td>Grand Total</td>';
+  let g=0;
+  st.forEach(t=>{
+    const v=colTot[t]||{val:0,cnt:0};
+    h+='<td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td>';
+    g+=v.val;
+  });
+  h+='<td class="num">'+fmtD(g)+'</td></tr></tbody></table>';
+  document.getElementById('t2').innerHTML=h;
+}
+
+// T3: per-rep rows tag attribution, column + grand totals use unique orders.
+function rT3(o,uniq){
+  const sources=new Set(),reps={};
+  o.forEach(x=>{
+    const src=x.source==='shopify_draft_order'?'Draft Order':x.source==='web'?'Web':'Other';
+    sources.add(src);
+    if(!reps[x.rep])reps[x.rep]={};
+    reps[x.rep][src]=(reps[x.rep][src]||0)+1;
+  });
+  const colTot={};
+  uniq.forEach(x=>{
+    const src=x.source==='shopify_draft_order'?'Draft Order':x.source==='web'?'Web':'Other';
+    sources.add(src);
+    colTot[src]=(colTot[src]||0)+1;
+  });
+  const ss=[...sources].sort(),sr=Object.keys(reps).sort();
+  let h='<table><thead><tr><th>Rep</th>';
+  ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});
+  h+='<th class="num">Total</th></tr></thead><tbody>';
+  sr.forEach(rep=>{
+    h+='<tr><td>'+rep+'</td>';
+    let rt=0;
+    ss.forEach(s=>{
+      const v=(reps[rep]||{})[s]||0;
+      h+='<td class="num">'+(v||'')+'</td>';
+      rt+=v;
+    });
+    h+='<td class="num">'+rt+'</td></tr>';
+  });
+  h+='<tr class="grand-total"><td>Grand Total</td>';
+  let g=0;
+  ss.forEach(s=>{h+='<td class="num">'+(colTot[s]||0)+'</td>';g+=colTot[s]||0});
+  h+='<td class="num">'+g+'</td></tr></tbody></table>';
+  document.getElementById('t3').innerHTML=h;
+}
+
+// T4 vendor × rep (drafts): per-rep tag attribution. Re:do excluded (warranty).
+function rT4(d){const vendors={},rs=new Set();d.forEach(x=>{const vnorm=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');if(vnorm==='redo')return;const label=x.vendor&&x.vendor.trim()?x.vendor:'Custom';rs.add(x.rep);if(!vendors[label])vendors[label]={};vendors[label][x.rep]=(vendors[label][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4').innerHTML=h}
+
+// T4 vendor × rep (orders): same matrix, rendered into #t4o.
+function rT4_orders(o){const vendors={},rs=new Set();o.forEach(x=>{const vnorm=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');if(vnorm==='redo')return;const label=x.vendor&&x.vendor.trim()?x.vendor:'Custom';rs.add(x.rep);if(!vendors[label])vendors[label]={};vendors[label][x.rep]=(vendors[label][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4o').innerHTML=h}
+
+// T5: per-rep rows tag attribution, column + grand totals use unique drafts.
+function rT5(d,uniq){
+  const statuses=new Set(),reps={};
+  d.forEach(x=>{
+    statuses.add(x.status);
+    if(!reps[x.rep])reps[x.rep]={};
+    reps[x.rep][x.status]=(reps[x.rep][x.status]||0)+1;
+  });
+  const colTot={};
+  uniq.forEach(x=>{
+    statuses.add(x.status);
+    colTot[x.status]=(colTot[x.status]||0)+1;
+  });
+  const ss=[...statuses].sort(),sr=Object.keys(reps).sort();
+  let h='<table><thead><tr><th>Rep</th>';
+  ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});
+  h+='<th class="num">Total</th></tr></thead><tbody>';
+  sr.forEach(rep=>{
+    h+='<tr><td>'+rep+'</td>';
+    let rt=0;
+    ss.forEach(s=>{
+      const v=(reps[rep]||{})[s]||0;
+      h+='<td class="num">'+(v||'')+'</td>';
+      rt+=v;
+    });
+    h+='<td class="num">'+rt+'</td></tr>';
+  });
+  h+='<tr class="grand-total"><td>Grand Total</td>';
+  let g=0;
+  ss.forEach(s=>{h+='<td class="num">'+(colTot[s]||0)+'</td>';g+=colTot[s]||0});
+  h+='<td class="num">'+g+'</td></tr></tbody></table>';
+  document.getElementById('t5').innerHTML=h;
+}
+
+// T6 channel performance: input is already deduped to unique orders.
+function rT6(o){const ch={};o.forEach(x=>{if(!ch[x.sales_type])ch[x.sales_type]={rev:0,cnt:0};ch[x.sales_type].rev+=x.subtotal;ch[x.sales_type].cnt++});const s=Object.entries(ch).sort((a,b)=>b[1].rev-a[1].rev);const tr=s.reduce((a,[,v])=>a+v.rev,0),tc=s.reduce((a,[,v])=>a+v.cnt,0);let h='<table><thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">% of Total</th></tr></thead><tbody>';s.forEach(([c,d])=>{h+='<tr><td>'+c+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td><td class="num">'+pct(tr?d.rev/tr:0)+'</td></tr>'});h+='<tr class="grand-total"><td>Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td><td class="num">100%</td></tr></tbody></table>';document.getElementById('t6').innerHTML=h}
+
+// Top 25 products by units sold. Aggregates by SKU. Input is line-item-deduped
+// so shared-rep orders don't double-count quantities. Re:do vendor excluded.
+function renderTopProducts(lines,targetId){
+  const bySku={};
+  lines.forEach(x=>{
+    if(!x.sku)return;
+    const v=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');
+    if(v==='redo')return;
+    if(!bySku[x.sku])bySku[x.sku]={title:x.item_title,vendor:x.vendor,units:0};
+    bySku[x.sku].units+=(x.item_qty||0);
+  });
+  const top=Object.entries(bySku).sort((a,b)=>b[1].units-a[1].units).slice(0,25);
+  let h='<table><thead><tr><th style="width:auto">Product</th><th style="width:180px">Vendor</th><th class="num" style="width:100px">Units</th></tr></thead><tbody>';
+  top.forEach(([,d])=>{
+    h+='<tr><td style="white-space:normal;line-height:1.35">'+(d.title||'')+'</td><td>'+(d.vendor||'')+'</td><td class="num">'+d.units+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById(targetId).innerHTML=h;
+}
+function rT8(lines){renderTopProducts(lines,'t8')}
+function rT8_drafts(lines){renderTopProducts(lines,'t8d')}
+
+// T9 tag position per rep: of the orders this rep is tagged on, what % of
+// the time are they 1st tag, 2nd tag, or 3rd+ tag in the rep sequence.
+// Input is uo (one row per order × rep) so each rep counts once per order.
+function rT9(o){
+  const reps={};
+  o.forEach(x=>{
+    const pos=getRepPosition(x.tags,x.rep);
+    if(pos<=0)return;
+    if(!reps[x.rep])reps[x.rep]={total:0,first:0,second:0,third:0};
+    reps[x.rep].total++;
+    if(pos===1)reps[x.rep].first++;
+    else if(pos===2)reps[x.rep].second++;
+    else reps[x.rep].third++;
+  });
+  const s=Object.entries(reps).sort((a,b)=>b[1].total-a[1].total);
+  const t={total:0,first:0,second:0,third:0};
+  s.forEach(([,v])=>{t.total+=v.total;t.first+=v.first;t.second+=v.second;t.third+=v.third});
+  const p=(n,d)=>d?Math.round(n/d*100)+'%':'0%';
+  let h='<table><thead><tr><th>Rep</th><th class="num">Tagged orders</th><th class="num">1st tag</th><th class="num">1st %</th><th class="num">2nd tag</th><th class="num">2nd %</th><th class="num">3rd+ tag</th><th class="num">3rd+ %</th></tr></thead><tbody>';
+  s.forEach(([r,v])=>{
+    h+='<tr><td>'+r+'</td><td class="num">'+v.total+'</td><td class="num">'+v.first+'</td><td class="num">'+p(v.first,v.total)+'</td><td class="num">'+v.second+'</td><td class="num">'+p(v.second,v.total)+'</td><td class="num">'+v.third+'</td><td class="num">'+p(v.third,v.total)+'</td></tr>';
+  });
+  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+t.total+'</td><td class="num">'+t.first+'</td><td class="num">'+p(t.first,t.total)+'</td><td class="num">'+t.second+'</td><td class="num">'+p(t.second,t.total)+'</td><td class="num">'+t.third+'</td><td class="num">'+p(t.third,t.total)+'</td></tr></tbody></table>';
+  document.getElementById('t9').innerHTML=h;
+}
+
+// Tab switching. Toggles .hidden on each section based on active tab.
+// Charts inside hidden sections aren't removed — Chart.js just renders
+// into a display:none canvas, which is fine (they redraw on tab change).
+function setTab(tab){
+  activeTab=tab;
+  sessionStorage.setItem('activeTab',tab);
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    b.classList.toggle('active',b.dataset.tab===tab);
+  });
+  document.querySelectorAll('.section[data-section]').forEach(s=>{
+    const which=s.dataset.section;
+    s.classList.toggle('hidden',tab!=='all'&&tab!==which);
+  });
+}
+
+function promptLogin(){
+  document.getElementById('loginModal').classList.add('open');
+  setTimeout(()=>document.getElementById('loginPwd').focus(),50);
+}
+function closeLogin(){document.getElementById('loginModal').classList.remove('open')}
+
+async function submitLogin(){
+  const pwd=document.getElementById('loginPwd').value;
+  const errBox=document.getElementById('loginError');
+  errBox.style.display='none';
+  if(!pwd){errBox.textContent='Enter a password';errBox.style.display='block';return}
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
+    if(!r.ok){
+      errBox.textContent='Wrong password';errBox.style.display='block';return;
+    }
+    dashKey=pwd;
+    sessionStorage.setItem('dashKey',pwd);
+    document.getElementById('loginPwd').value='';
+    closeLogin();
+  }catch(e){
+    errBox.textContent='Error: '+e.message;errBox.style.display='block';
+  }
+}
+
+async function boot(){
+  // Default date range
+  const n=new Date();
+  document.getElementById('dateFrom').value=new Date(n.getFullYear(),n.getMonth(),1).toISOString().split('T')[0];
+  document.getElementById('dateTo').value=n.toISOString().split('T')[0];
+
+  // Apply persisted tab state
+  setTab(activeTab);
+
+  // Check if dashboard auth is required
+  try{
+    const r=await fetch('/api/login');
+    const j=await r.json();
+    if(j.required&&!dashKey){
+      promptLogin();
+    }
+  }catch(e){
+    // If /api/login is unavailable, fall through — data endpoints will
+    // reject with 401 and trigger a login prompt at that point.
+  }
+}
+boot();
+</script>
+</body></html>
