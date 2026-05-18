@@ -58,6 +58,8 @@ th{text-align:left;padding:9px 6px;border-bottom:2px solid var(--accent);font-we
 td{padding:7px 6px;border-bottom:1px solid var(--bg3);white-space:nowrap;color:var(--text)}
 tr:hover td{background:var(--bg3)}
 .grand-total td{font-weight:700;border-top:2px solid var(--accent);background:var(--bg3);color:#fff;text-transform:uppercase;letter-spacing:.5px;font-size:11px}
+.subtotal td{font-weight:600;border-top:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text2);font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+.row-hint{display:block;font-weight:400;font-size:9px;color:var(--text3);letter-spacing:.3px;margin-top:2px;text-transform:none}
 .table-scroll{overflow-x:auto;max-height:400px;overflow-y:auto}
 .table-scroll-tall{overflow-x:auto}
 .num{text-align:right;font-variant-numeric:tabular-nums}
@@ -546,18 +548,23 @@ function rMC_drafts(d){
   monthChartD=new Chart(document.getElementById('monthChartD'),{type:'bar',data:{labels:s.map(([,v])=>v.label),datasets:[{data:s.map(([,v])=>v.val),backgroundColor:'#30d5c8',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{autoSkip:true,maxRotation:45}},y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k'},grid:{color:'#252525'}}}}});
 }
 
-// T1: per-rep rows show tag attribution; grand total uses unique orders.
+// T1 orders rep summary. Two total rows so co-tagged orders are visible:
+//   "Attributed total" = sum of per-rep rows (co-tagged orders counted once per rep)
+//   "Unique orders"    = dedupe to one row per order (true revenue / order count)
 function rT1(o,uniq){
   const reps={};o.forEach(x=>{if(!reps[x.rep])reps[x.rep]={rev:0,cnt:0};reps[x.rep].rev+=x.subtotal;reps[x.rep].cnt++});
   const s=Object.entries(reps).sort((a,b)=>b[1].rev-a[1].rev);
+  const attrRev=s.reduce((a,[,d])=>a+d.rev,0),attrCnt=s.reduce((a,[,d])=>a+d.cnt,0);
   const tr=uniq.reduce((a,x)=>a+x.subtotal,0),tc=uniq.length;
+  const dupCnt=attrCnt-tc;
   let h='<table><thead><tr><th>Rep</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th></tr></thead><tbody>';
   s.forEach(([r,d])=>{h+='<tr><td>'+r+'</td><td class="num">'+fmtD(d.rev)+'</td><td class="num">'+d.cnt+'</td><td class="num">'+fmtD(d.cnt?d.rev/d.cnt:0)+'</td></tr>'});
-  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td></tr></tbody></table>';
+  h+='<tr class="subtotal"><td>Attributed total<span class="row-hint">sum of credits above</span></td><td class="num">'+fmtD(attrRev)+'</td><td class="num">'+attrCnt+'</td><td class="num">'+fmtD(attrCnt?attrRev/attrCnt:0)+'</td></tr>';
+  h+='<tr class="grand-total"><td>Unique orders'+(dupCnt>0?'<span class="row-hint">'+dupCnt+' co-tagged credits removed</span>':'')+'</td><td class="num">'+fmtD(tr)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tr/tc:0)+'</td></tr></tbody></table>';
   document.getElementById('t1').innerHTML=h;
 }
 
-// T1 drafts: per-rep tag attribution, grand total deduped to unique drafts.
+// T1 drafts: per-rep tag attribution + "Attributed total" + "Unique drafts" rows.
 function rT1_drafts(d,uniq){
   const reps={};
   d.forEach(x=>{
@@ -567,20 +574,26 @@ function rT1_drafts(d,uniq){
     if(x.converted)reps[x.rep].conv++;
   });
   const s=Object.entries(reps).sort((a,b)=>b[1].val-a[1].val);
+  const attrVal=s.reduce((a,[,v])=>a+v.val,0);
+  const attrCnt=s.reduce((a,[,v])=>a+v.cnt,0);
+  const attrConv=s.reduce((a,[,v])=>a+v.conv,0);
   const tv=uniq.reduce((a,x)=>a+x.subtotal,0);
   const tc=uniq.length;
   const tconv=uniq.filter(x=>x.converted).length;
+  const dupCnt=attrCnt-tc;
   let h='<table><thead><tr><th>Rep</th><th class="num">Draft value</th><th class="num">Drafts</th><th class="num">Avg value</th><th class="num">Converted</th><th class="num">Conv %</th></tr></thead><tbody>';
   s.forEach(([r,v])=>{
     const cp=v.cnt?Math.round(v.conv/v.cnt*100):0;
     h+='<tr><td>'+r+'</td><td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td><td class="num">'+fmtD(v.cnt?v.val/v.cnt:0)+'</td><td class="num">'+v.conv+'</td><td class="num">'+cp+'%</td></tr>';
   });
+  const acp=attrCnt?Math.round(attrConv/attrCnt*100):0;
+  h+='<tr class="subtotal"><td>Attributed total<span class="row-hint">sum of credits above</span></td><td class="num">'+fmtD(attrVal)+'</td><td class="num">'+attrCnt+'</td><td class="num">'+fmtD(attrCnt?attrVal/attrCnt:0)+'</td><td class="num">'+attrConv+'</td><td class="num">'+acp+'%</td></tr>';
   const tcp=tc?Math.round(tconv/tc*100):0;
-  h+='<tr class="grand-total"><td>Grand Total</td><td class="num">'+fmtD(tv)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tv/tc:0)+'</td><td class="num">'+tconv+'</td><td class="num">'+tcp+'%</td></tr></tbody></table>';
+  h+='<tr class="grand-total"><td>Unique drafts'+(dupCnt>0?'<span class="row-hint">'+dupCnt+' co-tagged credits removed</span>':'')+'</td><td class="num">'+fmtD(tv)+'</td><td class="num">'+tc+'</td><td class="num">'+fmtD(tc?tv/tc:0)+'</td><td class="num">'+tconv+'</td><td class="num">'+tcp+'%</td></tr></tbody></table>';
   document.getElementById('t1d').innerHTML=h;
 }
 
-// T2: per-rep rows tag attribution, column + grand totals use unique drafts.
+// T2 drafts × sales type. Two total rows for the same reason as T1.
 function rT2(d,uniq){
   const types=new Set(),reps={};
   d.forEach(x=>{
@@ -598,6 +611,9 @@ function rT2(d,uniq){
     colTot[x.sales_type].cnt++;
   });
   const st=[...types].sort(),sr=Object.keys(reps).sort();
+  // Attributed column totals = sum down each per-rep column
+  const attrColTot={};st.forEach(t=>{attrColTot[t]={val:0,cnt:0}});
+  sr.forEach(rep=>{st.forEach(t=>{const v=(reps[rep]||{})[t]||{val:0,cnt:0};attrColTot[t].val+=v.val;attrColTot[t].cnt+=v.cnt})});
   let h='<table><thead><tr><th>Rep</th>';
   st.forEach(t=>{h+='<th class="num">'+t+' Value</th><th class="num">'+t+' Count</th>'});
   h+='<th class="num">Total</th></tr></thead><tbody>';
@@ -611,18 +627,23 @@ function rT2(d,uniq){
     });
     h+='<td class="num">'+fmtD(rt)+'</td></tr>';
   });
-  h+='<tr class="grand-total"><td>Grand Total</td>';
+  // Attributed total row
+  h+='<tr class="subtotal"><td>Attributed total<span class="row-hint">sum of credits</span></td>';
+  let ag=0;
+  st.forEach(t=>{const v=attrColTot[t];h+='<td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td>';ag+=v.val});
+  h+='<td class="num">'+fmtD(ag)+'</td></tr>';
+  // Unique drafts row
+  const attrCnt=Object.values(attrColTot).reduce((a,v)=>a+v.cnt,0);
+  const uniqCnt=Object.values(colTot).reduce((a,v)=>a+v.cnt,0);
+  const dupCnt=attrCnt-uniqCnt;
+  h+='<tr class="grand-total"><td>Unique drafts'+(dupCnt>0?'<span class="row-hint">'+dupCnt+' co-tagged credits removed</span>':'')+'</td>';
   let g=0;
-  st.forEach(t=>{
-    const v=colTot[t]||{val:0,cnt:0};
-    h+='<td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td>';
-    g+=v.val;
-  });
+  st.forEach(t=>{const v=colTot[t]||{val:0,cnt:0};h+='<td class="num">'+fmtD(v.val)+'</td><td class="num">'+v.cnt+'</td>';g+=v.val});
   h+='<td class="num">'+fmtD(g)+'</td></tr></tbody></table>';
   document.getElementById('t2').innerHTML=h;
 }
 
-// T3: per-rep rows tag attribution, column + grand totals use unique orders.
+// T3 orders × source. Two total rows.
 function rT3(o,uniq){
   const sources=new Set(),reps={};
   o.forEach(x=>{
@@ -638,20 +659,24 @@ function rT3(o,uniq){
     colTot[src]=(colTot[src]||0)+1;
   });
   const ss=[...sources].sort(),sr=Object.keys(reps).sort();
+  const attrColTot={};ss.forEach(s=>{attrColTot[s]=0});
+  sr.forEach(rep=>{ss.forEach(s=>{attrColTot[s]+=(reps[rep]||{})[s]||0})});
   let h='<table><thead><tr><th>Rep</th>';
   ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});
   h+='<th class="num">Total</th></tr></thead><tbody>';
   sr.forEach(rep=>{
     h+='<tr><td>'+rep+'</td>';
     let rt=0;
-    ss.forEach(s=>{
-      const v=(reps[rep]||{})[s]||0;
-      h+='<td class="num">'+(v||'')+'</td>';
-      rt+=v;
-    });
+    ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v});
     h+='<td class="num">'+rt+'</td></tr>';
   });
-  h+='<tr class="grand-total"><td>Grand Total</td>';
+  h+='<tr class="subtotal"><td>Attributed total<span class="row-hint">sum of credits</span></td>';
+  let ag=0;
+  ss.forEach(s=>{h+='<td class="num">'+attrColTot[s]+'</td>';ag+=attrColTot[s]});
+  h+='<td class="num">'+ag+'</td></tr>';
+  const uniqCnt=Object.values(colTot).reduce((a,v)=>a+v,0);
+  const dupCnt=ag-uniqCnt;
+  h+='<tr class="grand-total"><td>Unique orders'+(dupCnt>0?'<span class="row-hint">'+dupCnt+' co-tagged credits removed</span>':'')+'</td>';
   let g=0;
   ss.forEach(s=>{h+='<td class="num">'+(colTot[s]||0)+'</td>';g+=colTot[s]||0});
   h+='<td class="num">'+g+'</td></tr></tbody></table>';
@@ -664,7 +689,7 @@ function rT4(d){const vendors={},rs=new Set();d.forEach(x=>{const vnorm=(x.vendo
 // T4 vendor × rep (orders): same matrix, rendered into #t4o.
 function rT4_orders(o){const vendors={},rs=new Set();o.forEach(x=>{const vnorm=(x.vendor||'').toLowerCase().replace(/[^a-z]/g,'');if(vnorm==='redo')return;const label=x.vendor&&x.vendor.trim()?x.vendor:'Custom';rs.add(x.rep);if(!vendors[label])vendors[label]={};vendors[label][x.rep]=(vendors[label][x.rep]||0)+1});const sr=[...rs].sort();const sv=Object.entries(vendors).sort((a,b)=>{const ta=Object.values(a[1]).reduce((s,v)=>s+v,0),tb=Object.values(b[1]).reduce((s,v)=>s+v,0);return tb-ta});let h='<table><thead><tr><th>Vendor</th>';sr.forEach(r=>{h+='<th class="num">'+r+'</th>'});h+='<th class="num">Total</th></tr></thead><tbody>';const rt={};sv.forEach(([v,data])=>{h+='<tr><td>'+v+'</td>';let vt=0;sr.forEach(r=>{const c=data[r]||0;h+='<td class="num">'+(c||'')+'</td>';vt+=c;rt[r]=(rt[r]||0)+c});h+='<td class="num">'+vt+'</td></tr>'});h+='<tr class="grand-total"><td>Grand Total</td>';let g=0;sr.forEach(r=>{h+='<td class="num">'+(rt[r]||0)+'</td>';g+=rt[r]||0});h+='<td class="num">'+g+'</td></tr></tbody></table>';document.getElementById('t4o').innerHTML=h}
 
-// T5: per-rep rows tag attribution, column + grand totals use unique drafts.
+// T5 drafts × status. Two total rows.
 function rT5(d,uniq){
   const statuses=new Set(),reps={};
   d.forEach(x=>{
@@ -678,20 +703,24 @@ function rT5(d,uniq){
     colTot[x.status]=(colTot[x.status]||0)+1;
   });
   const ss=[...statuses].sort(),sr=Object.keys(reps).sort();
+  const attrColTot={};ss.forEach(s=>{attrColTot[s]=0});
+  sr.forEach(rep=>{ss.forEach(s=>{attrColTot[s]+=(reps[rep]||{})[s]||0})});
   let h='<table><thead><tr><th>Rep</th>';
   ss.forEach(s=>{h+='<th class="num">'+s+'</th>'});
   h+='<th class="num">Total</th></tr></thead><tbody>';
   sr.forEach(rep=>{
     h+='<tr><td>'+rep+'</td>';
     let rt=0;
-    ss.forEach(s=>{
-      const v=(reps[rep]||{})[s]||0;
-      h+='<td class="num">'+(v||'')+'</td>';
-      rt+=v;
-    });
+    ss.forEach(s=>{const v=(reps[rep]||{})[s]||0;h+='<td class="num">'+(v||'')+'</td>';rt+=v});
     h+='<td class="num">'+rt+'</td></tr>';
   });
-  h+='<tr class="grand-total"><td>Grand Total</td>';
+  h+='<tr class="subtotal"><td>Attributed total<span class="row-hint">sum of credits</span></td>';
+  let ag=0;
+  ss.forEach(s=>{h+='<td class="num">'+attrColTot[s]+'</td>';ag+=attrColTot[s]});
+  h+='<td class="num">'+ag+'</td></tr>';
+  const uniqCnt=Object.values(colTot).reduce((a,v)=>a+v,0);
+  const dupCnt=ag-uniqCnt;
+  h+='<tr class="grand-total"><td>Unique drafts'+(dupCnt>0?'<span class="row-hint">'+dupCnt+' co-tagged credits removed</span>':'')+'</td>';
   let g=0;
   ss.forEach(s=>{h+='<td class="num">'+(colTot[s]||0)+'</td>';g+=colTot[s]||0});
   h+='<td class="num">'+g+'</td></tr></tbody></table>';
